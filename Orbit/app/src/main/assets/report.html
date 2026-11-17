@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Report a park problem</title>
+<meta name="theme-color" content="#0e7490">
+<style>
+:root{--bg:#f2f5f8;--card:#fff;--ink:#14212e;--mut:#5b6b7b;--line:#d9e1e8;--acc:#0e7490;--acc-ink:#fff;--soft:#e2f2f5;--err:#b42318;--ok:#027a48;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b141c;--card:#14202b;--ink:#e6eef5;--mut:#98abbc;--line:#26384a;--acc:#22d3ee;--acc-ink:#03222a;--soft:#12313a;--err:#ff8a80;--ok:#6ee7b7;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0b141c;--card:#14202b;--ink:#e6eef5;--mut:#98abbc;--line:#26384a;--acc:#22d3ee;--acc-ink:#03222a;--soft:#12313a;--err:#ff8a80;--ok:#6ee7b7;color-scheme:dark}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:calc(18px + env(safe-area-inset-top,0px)) 16px calc(28px + env(safe-area-inset-bottom,0px))}
+main{max-width:520px;margin:0 auto}
+h1{font-size:25px;line-height:1.15;margin:4px 0 4px;letter-spacing:-.01em}
+.sub{color:var(--mut);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px}
+label{display:block;font-weight:700;font-size:14px;margin:14px 0 6px}
+label small{font-weight:500;color:var(--mut)}
+input[type=text],input[type=email],textarea{width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--ink);font:inherit}
+textarea{min-height:110px;resize:vertical}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chips button{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:99px;padding:9px 13px;font:inherit;font-size:14.5px;cursor:pointer}
+.chips button[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);font-weight:700}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:12px;padding:11px 14px;font:inherit;font-weight:700;cursor:pointer}
+.go{width:100%;margin-top:18px;border:0;background:var(--acc);color:var(--acc-ink);border-radius:14px;padding:15px;font:inherit;font-size:17px;font-weight:800;cursor:pointer}
+.go:disabled{opacity:.6}
+.place{font-weight:800;font-size:18px;padding:10px 12px;border-radius:12px;background:var(--soft)}
+#prev{display:block;width:100%;max-height:220px;object-fit:cover;border-radius:12px;margin-top:8px}
+.note{color:var(--mut);font-size:13.5px;margin:8px 0 0}
+.err{color:var(--err);font-weight:700;margin:10px 0 0}
+.done{text-align:center;padding:28px 10px}.done b{display:block;font-size:22px;margin-bottom:6px;color:var(--ok)}
+.hp{position:absolute;left:-5000px;width:1px;height:1px;overflow:hidden}
+.em{margin:16px 0 0;font-size:13.5px;color:var(--mut);text-align:center}
+</style></head><body><main>
+<h1>Report a park problem</h1>
+<p class="sub">Tell the Central Park grounds crew about something broken, unsafe or messy. It takes a minute.</p>
+<div class="card" id="form">
+  <div id="placeBox"></div>
+  <label>What kind of problem?</label>
+  <div class="chips" id="cats"></div>
+  <label for="msg">What did you see? <small>(where exactly, what&rsquo;s wrong)</small></label>
+  <textarea id="msg" maxlength="2000" placeholder="The swing chain by the north slide is broken."></textarea>
+  <label>Photo <small>(optional)</small></label>
+  <div class="row"><button class="btn" id="photoBtn" type="button">&#128247; Add a photo</button><button class="btn" id="photoX" type="button" hidden>Remove</button></div>
+  <input type="file" id="photo" accept="image/*" capture="environment" hidden>
+  <img id="prev" alt="Your photo" hidden>
+  <label>Location <small>(optional, helps the crew find it)</small></label>
+  <div class="row"><button class="btn" id="locBtn" type="button">&#128205; Share where I am</button></div>
+  <p class="note" id="locNote"></p>
+  <label for="contact">Email or phone <small>(optional, only if you&rsquo;d like a reply)</small></label>
+  <input type="text" id="contact" maxlength="200" autocomplete="email">
+  <div class="hp" aria-hidden="true"><label for="website">Leave this empty</label><input type="text" id="website" tabindex="-1" autocomplete="off"></div>
+  <p class="err" id="err" hidden></p>
+  <button class="go" id="send" type="button">Send report</button>
+  <p class="note">Your report goes to the park crew. We don&rsquo;t publish it.</p>
+</div>
+<div class="card done" id="done" hidden><b>Thank you!</b>The park crew has your report.<p class="note" style="margin-top:14px"><button class="btn" id="again" type="button">Send another</button></p></div>
+<p class="em"><b>Emergency? Call 911.</b></p>
+</main>
+<script src="vendor/supabase.js"></script>
+<script>
+(function(){
+  "use strict";
+  var URL_="https://obfembzzqikqufuyniuc.supabase.co",KEY="sb_publishable_0V-jBlBehb8fOwx-W_A6pg_lejmjqxs";
+  var CATS=["Broken or damaged","Safety hazard","Trash or litter","Graffiti","Water or sprinkler","Snow or ice","Lights out","Other"];
+  var $=function(id){return document.getElementById(id)},cat="",photo="",loc=null;
+  var q=new URLSearchParams(location.search),place=(q.get("p")||"").slice(0,120);
+  if(place){$("placeBox").innerHTML='<label style="margin-top:0">Park</label><div class="place"></div>';$("placeBox").querySelector(".place").textContent=place;document.title="Report a problem at "+place}
+  else $("placeBox").innerHTML='<label for="place" style="margin-top:0">Which park?</label><input type="text" id="place" maxlength="120" placeholder="Park name or nearest street">';
+  CATS.forEach(function(c){var b=document.createElement("button");b.type="button";b.textContent=c;b.setAttribute("aria-pressed","false");
+    b.onclick=function(){cat=c;[].forEach.call($("cats").children,function(x){x.setAttribute("aria-pressed",x===b)})};$("cats").appendChild(b)});
+  function err(t){$("err").textContent=t||"";$("err").hidden=!t}
+  $("photoBtn").onclick=function(){$("photo").click()};
+  $("photo").onchange=function(){var f=this.files&&this.files[0];if(!f)return;var u=URL.createObjectURL(f),im=new Image();
+    im.onload=function(){var s=Math.min(1,1000/Math.max(im.width,im.height)),c=document.createElement("canvas");c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);
+      c.getContext("2d").drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);photo=c.toDataURL("image/jpeg",.7);
+      if(photo.length>690000)photo=c.toDataURL("image/jpeg",.5);$("prev").src=photo;$("prev").hidden=false;$("photoX").hidden=false};
+    im.onerror=function(){err("That photo couldn\u2019t be read. Try a different one.")};im.src=u};
+  $("photoX").onclick=function(){photo="";$("prev").hidden=true;$("photoX").hidden=true;$("photo").value=""};
+  $("locBtn").onclick=function(){if(!navigator.geolocation){$("locNote").textContent="This phone can\u2019t share its location.";return}
+    $("locNote").textContent="Finding you\u2026";navigator.geolocation.getCurrentPosition(function(p){loc={lat:+p.coords.latitude.toFixed(6),lng:+p.coords.longitude.toFixed(6)};$("locNote").textContent="\u2713 Location added (within about "+Math.round(p.coords.accuracy)+" m)."},
+      function(){$("locNote").textContent="Location wasn\u2019t shared. That\u2019s fine; describe the spot instead."},{enableHighAccuracy:true,timeout:15000})};
+  $("send").onclick=function(){err("");var where=place||($("place")&&$("place").value.trim())||"",msg=$("msg").value.trim();
+    if(!where)return err("Say which park.");if(msg.length<3)return err("Describe what you saw.");
+    if($("website").value){$("form").hidden=true;$("done").hidden=false;return}
+    if(!window.supabase){return err("The page didn\u2019t load fully. Check your connection and reload.")}
+    var btn=this;btn.disabled=true;btn.textContent="Sending\u2026";
+    var sb=supabase.createClient(URL_,KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+    sb.from("public_reports").insert({place:where,category:cat||"Other",message:msg,contact:$("contact").value.trim()||null,photo:photo||null,lat:loc?loc.lat:null,lng:loc?loc.lng:null})
+      .then(function(r){if(r.error)throw r.error;$("form").hidden=true;$("done").hidden=false;window.scrollTo(0,0)})
+      .catch(function(e){btn.disabled=false;btn.textContent="Send report";var m=String(e&&e.message||e);err(/Too many/.test(m)?m:/fetch|network/i.test(m)?"Couldn\u2019t send. Check your connection and try again.":"Couldn\u2019t send: "+m)})};
+  $("again").onclick=function(){$("msg").value="";$("contact").value="";$("photoX").click();loc=null;$("locNote").textContent="";cat="";[].forEach.call($("cats").children,function(x){x.setAttribute("aria-pressed","false")});
+    $("send").disabled=false;$("send").textContent="Send report";$("done").hidden=true;$("form").hidden=false};
+})();
+</script>
+</body></html>

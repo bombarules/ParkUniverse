@@ -172,3 +172,56 @@ notifications, update banner) are not on the web page.
 ## Housekeeping (v2.7)
 - `Orbit/app/src/main/assets/three.min.js` (an unused second copy of the 3D library) is now a one-line placeholder.
   You can delete that file on GitHub.
+
+## Sign in first (v2.8)
+Park Universe now opens on a sign-in page. Nothing of the team's map shows until you sign in with your Team sync account.
+- After the first sign-in the phone remembers you, so later starts go straight to the map, with or without signal.
+- **Forgot password?** and **Owner setup** are on the sign-in page.
+- A new account waits on "Waiting for approval" until an admin sets its role (Menu ⋮ → Team sync → People).
+- Because Park Universe can be the phone's home screen, the sign-in page keeps **Apps** and **Home screen** buttons, so the
+  phone is never locked out.
+- Signing out (Team sync → Sign out) returns to the sign-in page.
+
+## Add to the map (v2.8)
+Work → **Add to the map**:
+- **Walk a park**: big buttons for each kind of item; tap one as you reach the thing and it's saved where you stand, numbered
+  (Bench 1, Bench 2…). Shows GPS accuracy, Undo, and an optional photo after each. Also a 🚶 Walk button in every layer's bar.
+- **Photos → items**: pick photos already on the phone; each one becomes an item at the spot it was taken, with the photo
+  attached. The app asks once for permission to read photo locations (Android hides them otherwise).
+- **Trace on the satellite photo**: pick a park and what to trace; the map switches to satellite, and after each line is saved
+  the next one starts until you tap ✕. Lines drawn from a layer's bar also chain now.
+- **Sidewalks from OpenStreetMap**: finds the paths already on the public map around a park; tap lines to leave them out,
+  then Add. They become *Sidewalk to shovel* items (steps get priority 1) and appear in the next storm's check-offs.
+- **Import a file**: CSV (needs Latitude and Longitude columns), GeoJSON or KML from Google Earth. Types are recognised from
+  names ("Backflow", "Trash can", "Sidewalk"…), the rest you choose. Details like Species, Serial # and Next test due carry
+  over, and ones already on the map are skipped. CSV and GeoJSON exported from this app import back in.
+
+## Winter (v2.8)
+- **Storm warnings**: when the National Weather Service has a winter storm, blizzard or ice warning or watch for Central Park,
+  a banner (and one phone notification) offers **Start storm**. Checked about every 20 minutes while the app is open.
+- **Crew hours and ice melt**: each park in a storm has Crew hours and Ice melt bags. Set **cost per bag** and **crew rate**
+  once on the storm screen and the storm log and monthly summary show an estimated cost.
+- **Pool checklists**: Work → Pool checklists → Winterizing or Opening, one shared list per pool per year (13 steps each).
+  **＋ Add step** adds your own steps to every pool's list.
+
+## Team (v2.8)
+- **Repeating tasks**: Work → Repeating tasks. Every N days, weeks, months or years, for one park, every pool, or every park
+  that has a certain item (playground, restroom, ball field…). Each task is created a week ahead (adjustable) and shows up in
+  Tasks and What's due. Quick starts: monthly playground safety check, weekly restroom check, spring field prep, monthly pool
+  safety equipment check, quarterly backflow look-over.
+- **Field Reports sync**: reports are now saved in the same store as the map's items, so Team sync shares them with everyone.
+  Reports from the old phone-only version are moved over the first time Field Reports opens. Reports are signed with your
+  team name. Viewers can read but not add.
+- **Resident reports**: `report.html` is a public form (no app, no account) with the park filled in from the QR code.
+  Residents pick a kind of problem, describe it, and can add a photo, their location and a way to reach them.
+  Work → **Resident reports** shows what came in: **Add to Field Reports** or **Dismiss**. Admins and editors get a phone
+  notification for new ones. **🖨 Signs** prints two QR signs per page, one per park. At most 40 reports an hour are accepted.
+  The form lives at `https://bombarules.github.io/ParkUniverse/report.html`, so it needs GitHub Pages turned on.
+  Server side: table `public_reports` (anyone can send, only the team can read and handle).
+
+## Offline and smaller (v2.8)
+- No signal: the map switches to a plain dark background and still shows every park and mapped item; the normal map comes back
+  when the signal does. Map areas you've looked at recently can also come from the phone's saved copy.
+  (A full offline map download isn't included: Mapbox's terms don't allow bulk saving of their map for this kind of app.)
+- Aquatics Tech's 3D pages are now separate files that open on demand (the page itself went from 3.2 MB to 8 KB) and they use
+  the 3D library inside the app, so they work without internet.

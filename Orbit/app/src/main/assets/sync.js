@@ -117,14 +117,17 @@
   function loadProfile() {
     if (!session) { profile = null; return Promise.resolve(); }
     return sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle().then(function (r) {
-      profile = r.data || { id: session.user.id, email: session.user.email, role: "pending", name: "" };
+      var cached = LS.get("pu-profile", null);
+      if (r.error && cached && cached.id === session.user.id) profile = cached;            /* offline: use the last known role */
+      else if (r.error) profile = { id: session.user.id, email: session.user.email, role: "editor", name: "", guess: true };   /* offline, first time on v2.8: the server still checks every change */
+      else { profile = r.data || { id: session.user.id, email: session.user.email, role: "pending", name: "" }; LS.set("pu-profile", profile); }
       if (window.PUAssets && PUAssets.setReadOnly) PUAssets.setReadOnly(profile.role === "viewer" || profile.role === "pending");
     });
   }
   function afterAuth() { return loadProfile().then(function () { emit(); if (canRead()) { goLive(); return syncNow(); } }); }
-  function signIn(email, pw) { return sb.auth.signInWithPassword({ email: String(email).trim().toLowerCase(), password: pw }).then(function (r) { if (r.error) throw r.error; session = r.data.session; return afterAuth(); }); }
-  function signOut() { stopLive(); return sb.auth.signOut().catch(function () {}).then(function () { session = null; profile = null; LS.set("pu-wm-items", null); LS.set("pu-wm-photos", null);
-    if (window.PUAssets && PUAssets.setReadOnly) PUAssets.setReadOnly(false); emit(); }); }
+  function signIn(email, pw) { var em = String(email).trim().toLowerCase(); return sb.auth.signInWithPassword({ email: em, password: pw }).then(function (r) { if (r.error) throw r.error; session = r.data.session; LS.set("pu-last-email", em); return afterAuth(); }); }
+  function signOut() { stopLive(); return sb.auth.signOut().catch(function () {}).then(function () { session = null; profile = null; LS.set("pu-wm-items", null); LS.set("pu-wm-photos", null); LS.set("pu-profile", null);
+    if (window.PUAssets && PUAssets.setReadOnly) PUAssets.setReadOnly(false); emit(); gate("signin"); }); }
   function callAdmin(body) {
     var h = { "Content-Type": "application/json", apikey: KEY }; if (session) h.Authorization = "Bearer " + session.access_token;
     return fetch(FN, { method: "POST", headers: h, body: JSON.stringify(body) }).then(function (r) { return r.json().catch(function () { return { error: "Server error " + r.status }; }); })
@@ -181,8 +184,12 @@
   function show(on) { $("sySheet").hidden = !on; var sc = $("asScrim"); if (sc) sc.hidden = !on; }
   $("syX").onclick = function () { show(false); };
   function field(id, label, type, ph, extra) { return '<div class="as-f"><label for="' + id + '">' + label + '</label><input id="' + id + '" type="' + (type || "text") + '" placeholder="' + (ph || "") + '" ' + (extra || "") + "></div>"; }
-  function open() { if (window.PU && PU.closeAll) PU.closeAll(); show(true); render(); }
+  function open() { if (gated()) { render(); return; } if (window.PU && PU.closeAll) PU.closeAll(); show(true); render(); }
+  /* the sign-in screens draw into the full-screen gate when it is up, otherwise into the Team sync sheet */
+  function bodyEl() { return gated() ? $("gtBody") : $("syBody"); }
+  function setTitle(t) { var el = gated() ? $("gtT") : $("syT"); if (el) el.textContent = t; }
   function render() {
+    if (gated()) return gateRender();
     var b = $("syBody");
     if (!client()) { b.innerHTML = '<p class="sy-err">The sync library didn\u2019t load. Reopen Park Universe.</p>'; return; }
     if (!session) {
@@ -221,8 +228,8 @@
       i.click(); setTimeout(function () { i.remove(); }, 60000); };
   }
   function renderForgot() {
-    $("syT").textContent = "Forgot password";
-    $("syBody").innerHTML = '<p class="mut" style="margin:0 0 6px">Enter your email. Your admin will see the request in Team sync, set a new password and tell you what it is.</p>' +
+    setTitle("Forgot password");
+    bodyEl().innerHTML = '<p class="mut" style="margin:0 0 6px">Enter your email. Your admin will see the request in Team sync, set a new password and tell you what it is.</p>' +
       field("syFEmail", "Email", "email", "you@mca80238.com") + '<div class="sy-err" id="syErr" hidden></div><p class="mut" id="syFDone" hidden style="color:#4ee1a0">Request sent. Ask your admin to check Team sync \u2192 People.</p>' +
       '<div class="as-act"><button class="p" id="syFGo">Ask an admin for a new password</button><button id="syFBack">Back</button></div>' +
       '<p class="src">Are you an owner (dchagolla@mca80238.com or bombarules@gmail.com)? Use <b>Owner setup or new password</b> with the setup code to set a new password yourself.</p>';
@@ -231,8 +238,8 @@
       callAdmin({ action: "request_reset", email: e }).then(function () { err(""); $("syFDone").hidden = false; }, function (x) { err(x.message); btn.disabled = false; }); };
   }
   function renderBoot() {
-    $("syT").textContent = "Owner setup or new password";
-    $("syBody").innerHTML = '<p class="mut" style="margin:0 0 6px">For the owner emails only. Enter the setup code and choose a password. The first time, this makes your admin account; after that it sets a new password if you forgot yours.</p>' +
+    setTitle("Owner setup or new password");
+    bodyEl().innerHTML = '<p class="mut" style="margin:0 0 6px">For the owner emails only. Enter the setup code and choose a password. The first time, this makes your admin account; after that it sets a new password if you forgot yours.</p>' +
       field("syCode", "Setup code", "text", "XXXX-XXXX-XXXX", 'autocapitalize="characters" autocomplete="off"') + field("syBName", "Your name", "text", "") +
       field("syBEmail", "Owner email", "email", "") + field("syBPw", "New password (8+ characters)", "password", "", 'autocomplete="new-password"') + field("syBPw2", "Repeat password", "password", "", 'autocomplete="new-password"') +
       '<div class="sy-err" id="syErr" hidden></div><div class="as-act"><button class="p" id="syBGo">Save and sign in</button><button id="syBBack">Back</button></div>';
@@ -242,7 +249,7 @@
       this.disabled = true; var btn = this;
       var wasReset = false;
       callAdmin({ action: "bootstrap", code: c, email: e, password: p, name: $("syBName").value }).then(function (r) { wasReset = !!r.reset; return signIn(e, p); })
-        .then(function () { toast(wasReset ? "New password saved. You're signed in." : "Admin account ready. You're signed in."); render(); }, function (x) { err(x.message); btn.disabled = false; }); };
+        .then(function () { toast(wasReset ? "New password saved. You're signed in." : "Admin account ready. You're signed in."); afterGate(); render(); }, function (x) { err(x.message); btn.disabled = false; }); };
   }
   function loadUsers() {
     sb.from("profiles").select("*").order("role").order("email").then(function (r) {
@@ -282,11 +289,70 @@
       function (x) { err(x.message); $("syAdd").disabled = false; });
   }
 
+
+  /* ---------------- sign-in screen: the first page ---------------- */
+  var gst = document.createElement("style");
+  gst.textContent = "#gate{position:fixed;inset:0;z-index:15;overflow:auto;background:radial-gradient(120% 70% at 50% 0%,#14304a 0%,#08121c 55%,#05080d 100%);color:var(--ink);" +
+    "padding:calc(28px + env(safe-area-inset-top,0px)) 16px calc(24px + env(safe-area-inset-bottom,0px))}" +
+    "#gate .gw{max-width:420px;margin:0 auto}#gate .gl{display:flex;align-items:center;gap:12px;margin:8px 0 26px}#gate .gl svg{width:52px;height:52px;flex:none}" +
+    "#gate .gl b{display:block;font-size:24px;letter-spacing:-.01em}#gate .gl small{display:block;color:var(--mut);font-size:13.5px}" +
+    "#gate h2{font-size:19px;margin:0 0 4px}#gate .gc{background:rgba(10,18,30,.78);border:1px solid var(--line);border-radius:20px;padding:16px 16px 10px;box-shadow:0 10px 30px rgba(0,0,0,.4)}" +
+    "#gate .as-f input{width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink);font:inherit;font-size:16px}" +
+    "#gate .as-f{display:flex;flex-direction:column;gap:5px;margin:10px 0}" +
+    "#gate .as-act button.p{background:linear-gradient(135deg,#34d399,#22d3ee);color:#03221a;border:0;padding:13px 8px;font-size:15px}" +
+    "#gate .gx{display:flex;gap:8px;margin-top:18px}#gate .gx button{flex:1;padding:11px 8px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-weight:700;font-size:13.5px;color:var(--ink)}" +
+    "#gate .gf{color:var(--mut);font-size:12px;text-align:center;margin-top:16px}" +
+    "body.gated .dock,body.gated .top{visibility:hidden}body.gated #drawer{z-index:16}";
+  document.head.appendChild(gst);
+  var gateEl = document.createElement("div"); gateEl.id = "gate"; gateEl.hidden = true; gateEl.setAttribute("role", "dialog"); gateEl.setAttribute("aria-label", "Sign in to Park Universe");
+  var logo = (document.querySelector("#brand svg") || {}).outerHTML || "";
+  gateEl.innerHTML = '<div class="gw"><div class="gl">' + logo + '<div><b>Park Universe</b><small>Central Park parks, pools and grounds</small></div></div>' +
+    '<div class="gc"><h2 id="gtT">Sign in</h2><div id="gtBody"></div></div><div class="gx" id="gtX"></div><p class="gf" id="gtF"></p></div>';
+  document.body.appendChild(gateEl);
+  var gateState = "", gateWhy = "", typedEmail = "";
+  function gated() { return !gateEl.hidden; }
+  function gate(state, why) { gateState = state || "signin"; gateWhy = why || ""; gateEl.hidden = false; document.body.classList.add("gated"); if (window.PU && PU.closeAll) try { PU.closeAll(); } catch (e) {} show(false); gateRender(); }
+  function ungate() { if (!gated()) return; gateEl.hidden = true; document.body.classList.remove("gated"); }
+  function afterGate() { if (!session) return gate("signin"); if (role() === "pending") return gate("pending"); ungate(); }
+  function gateRender() {
+    var b = $("gtBody"), x = $("gtX"), native = !!window.BombaNative;
+    x.innerHTML = native ? '<button id="gtApps">▦ Apps</button><button id="gtHome">🏠 Home screen</button>' : "";
+    if ($("gtApps")) $("gtApps").onclick = function () { if (window.PU && PU.openApps) PU.openApps(); };
+    if ($("gtHome")) $("gtHome").onclick = function () { try { BombaNative.homeSettings(); } catch (e) {} };
+    $("gtF").textContent = "Version " + ((window.PoolBridge && PoolBridge.version && (function () { try { return PoolBridge.version(); } catch (e) { return ""; } })()) || "web");
+    if (!client()) { setTitle("Can’t start"); b.innerHTML = '<p class="sy-err">The sign-in library didn’t load. Close Park Universe and open it again.</p>'; return; }
+    if (gateState === "pending" && session) {
+      setTitle("Waiting for approval");
+      b.innerHTML = '<p class="mut" style="margin:0 0 6px">You’re signed in as <b>' + esc(session.user.email) + '</b>. An admin needs to approve your account before you can see the team’s map. Ask them to open Menu ⋮ → Team sync → People and set your role.</p>' +
+        '<div class="sy-err" id="syErr" hidden></div><div class="as-act"><button class="p" id="gtAgain">Check again</button><button id="gtOut">Sign out</button></div>';
+      $("gtAgain").onclick = function () { var btn = this; btn.disabled = true; loadProfile().then(function () { if (role() !== "pending") { afterAuth(); afterGate(); toast("You’re approved. Welcome."); } else { err("Not approved yet."); btn.disabled = false; } }, function () { btn.disabled = false; }); };
+      $("gtOut").onclick = function () { signOut(); };
+      return;
+    }
+    setTitle("Sign in");
+    b.innerHTML = '<p class="mut" style="margin:0 0 4px">Use the email and password your admin gave you.</p>' + (gateWhy ? '<p class="sy-err">' + esc(gateWhy) + "</p>" : "") +
+      field("syEmail", "Email", "email", "you@mca80238.com", 'autocomplete="username" autocapitalize="off"') + field("syPw", "Password", "password", "", 'autocomplete="current-password"') +
+      '<div class="sy-err" id="syErr" hidden></div><div class="as-act"><button class="p" id="syIn">Sign in</button></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><button class="sy-link" id="syForgot">Forgot password?</button><button class="sy-link" id="syBoot">Owner setup</button></div>';
+    $("syEmail").value = typedEmail || LS.get("pu-last-email", "") || ""; $("syEmail").oninput = function () { typedEmail = this.value; };
+    var go = function () { var e = $("syEmail").value, p = $("syPw").value; if (!e || !p) return err("Enter your email and password.");
+      if (navigator.onLine === false) return err("No signal. Signing in the first time needs the internet; after that the app works offline.");
+      $("syIn").disabled = true; $("syIn").textContent = "Signing in…";
+      signIn(e, p).then(function () { afterGate(); if (!gated()) toast("Welcome" + (profile && profile.name ? ", " + profile.name.split(" ")[0] : "") + "."); },
+        function (x) { err(/invalid/i.test(x.message) ? "Wrong email or password." : x.message); $("syIn").disabled = false; $("syIn").textContent = "Sign in"; }); };
+    $("syIn").onclick = go; $("syPw").onkeydown = function (ev) { if (ev.key === "Enter") go(); };
+    $("syForgot").onclick = renderForgot; $("syBoot").onclick = renderBoot;
+    setTimeout(function () { try { ($("syEmail").value ? $("syPw") : $("syEmail")).focus(); } catch (e) {} }, 60);
+  }
+  /* show the sign-in screen right away when this phone has never signed in, so the map never flashes first */
+  try { if (!localStorage.getItem("pu-auth")) gate("signin"); } catch (e) { gate("signin"); }
+
   /* ---------------- start ---------------- */
   function start() {
-    if (!client()) { emit(); return; }
-    sb.auth.getSession().then(function (r) { session = r.data && r.data.session || null; return session ? afterAuth() : emit(); }).catch(function () { emit(); });
-    sb.auth.onAuthStateChange(function (ev, s) { if (ev === "TOKEN_REFRESHED" || ev === "SIGNED_IN") session = s; if (ev === "SIGNED_OUT") { session = null; profile = null; emit(); } });
+    if (!client()) { emit(); gate("signin"); return; }
+    sb.auth.getSession().then(function (r) { session = r.data && r.data.session || null; if (!session) { emit(); gate("signin"); return; } return afterAuth().then(afterGate); })
+      .catch(function () { emit(); if (!session) gate("signin"); });
+    sb.auth.onAuthStateChange(function (ev, s) { if (ev === "TOKEN_REFRESHED" || ev === "SIGNED_IN") session = s; if (ev === "SIGNED_OUT") { session = null; profile = null; emit(); gate("signin", "You were signed out. Sign in again."); } });
     if (window.PUAssets && PUAssets.onChange) PUAssets.onChange(function () { if (session && canWrite()) schedule(); else emit(); });
     window.addEventListener("online", function () { online = true; schedule(300); });
     window.addEventListener("offline", function () { online = false; emit(); });
@@ -294,7 +360,7 @@
     setInterval(function () { if (session && !document.hidden) syncNow(); else emit(); }, 60000);
   }
   window.PUSync = { open: open, syncNow: syncNow, status: statusText, onStatus: function (f) { statusCbs.push(f); }, download: download, role: role, backup: backup, restoreFile: restoreFile,
-    signIn: function (e, p) { return signIn(e, p); }, signOut: signOut, signedIn: function () { return !!session; },
+    signIn: function (e, p) { return signIn(e, p).then(afterGate); }, signOut: signOut, signedIn: function () { return !!session; }, gated: gated,
     who: function () { return profile && profile.name ? profile.name : session && session.user && session.user.email ? session.user.email.split("@")[0] : ""; }, _state: function () { return { session: !!session, profile: profile, busy: busy, lastErr: lastErr }; }, _client: function () { return sb; } };
   if (window.PUAssets && PUAssets.ready) PUAssets.ready.then(start); else start();
 })();

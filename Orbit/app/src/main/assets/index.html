@@ -254,7 +254,15 @@ $("sub").textContent="Central Park \u00b7 "+PL.length+" places";
 var map=null,sel=-1,look=LS.get("pu-look3","map"),models=LS.get("pu-models",true),light=LS.get("pu-light","auto");
 var sat=look==="sat";
 var STD="mapbox://styles/mapbox/standard",SAT="mapbox://styles/mapbox/satellite-streets-v12",STREETS="mapbox://styles/mapbox/streets-v12";
-function styleFor(){return look==="sat"?SAT:look==="real"?STD:STREETS}
+/* no signal: a plain dark background so parks and every mapped item still show; the normal map comes back with the signal */
+var OFFLINE_STYLE={version:8,name:"offline",glyphs:"mapbox://fonts/mapbox/{fontstack}/{range}.pbf",sources:{},layers:[{id:"bg",type:"background",paint:{"background-color":"#0d1b26"}}]},offMode=navigator.onLine===false;
+function styleFor(){return offMode?OFFLINE_STYLE:look==="sat"?SAT:look==="real"?STD:STREETS}
+var offToldAt=0;
+function goOffline(){if(offMode||!map)return;offMode=true;map.setStyle(OFFLINE_STYLE);if(Date.now()-offToldAt>600000&&!document.body.classList.contains("gated")){offToldAt=Date.now();toast("No signal: showing your parks and items without the background map. It comes back when you\u2019re online.",6000)}}
+/* the background map failed while the phone says it is online (weak signal): try again every couple of minutes */
+setInterval(function(){if(offMode&&map&&navigator.onLine!==false){offMode=false;map.setStyle(styleFor())}},120000);
+window.addEventListener("online",function(){if(offMode&&map){offMode=false;map.setStyle(styleFor());toast("Back online.")}});
+window.addEventListener("offline",function(){if(map&&!map.isStyleLoaded())goOffline()});
 var HOME={center:[-104.8885,39.7745],zoom:12.6,pitch:58,bearing:-22};
 function note(t){var n=$("note")||document.createElement("div");n.id="note";n.className="note glass";n.textContent=t;document.body.appendChild(n)}
 function toast(t,ms){[].forEach.call(document.querySelectorAll(".toast"),function(o){o.remove()});var n=document.createElement("div");n.className="toast";n.setAttribute("role","status");n.textContent=t;document.body.appendChild(n);setTimeout(function(){n.remove()},ms||3500)}
@@ -267,7 +275,7 @@ var rbT=0;function refresh(){if(map&&map.getSource("pu"))map.getSource("pu").set
 
 function addLayers(){
   if(!map||map.getSource("pu"))return;
-  var std=look==="real",slot=std?{slot:"top"}:{};
+  var std=look==="real"&&!offMode,slot=std?{slot:"top"}:{};
   if(window.PU3D_WORLD){PU3D_WORLD.reset();PU3D_WORLD.setOn(look!=="real"&&models)}
   if(std){try{map.setConfigProperty("basemap","lightPreset",preset());map.setConfigProperty("basemap","showPointOfInterestLabels",true)}catch(e){}}
   else if(look==="map"){
@@ -313,6 +321,7 @@ if(window.mapboxgl){
 if(map){
   map.on("style.load",addLayers);
   map.on("error",function(e){var m=String(e&&e.error&&(e.error.message||e.error.status)||"");
+    if(!offMode&&!e.sourceId&&!map.isStyleLoaded()&&(navigator.onLine===false||/fetch|network|Failed|load/i.test(m)))goOffline();
     if(e&&e.sourceId&&/satellite|mapbox(?!-dem)/.test(e.sourceId+" "+m)&&look==="sat"){window.__satErr=(e.error&&(e.error.status||""))+" "+m.slice(0,80);
       if(!window.__satWarned){window.__satWarned=1;toast("Satellite photos aren't loading ("+window.__satErr.trim()+"). Switch to Street map, or send Claude a screenshot.",7000)}}
     if(/401|403|token|Unauthorized|Forbidden/i.test(m)&&!$("note"))note("The map was blocked by Mapbox. The access key may not allow this app. Open Mapbox \u2192 Tokens and allow bombarules.github.io.")});
@@ -599,7 +608,7 @@ window.__pu={PL:PL,pick:pick,tourStart:tourStart,tour:function(){return tour},ro
 var namesOn=true;function setNames(on){namesOn=on;if(!map)return;["pu-label","pu-sel-label","pu-dot","pu-glow"].forEach(function(id){if(map.getLayer(id))map.setLayoutProperty(id,"visibility",on?"visible":"none")})}
 function setTempLook(l){if(look===l)return;if(!prevLook)prevLook=look;look=l;sat=look==="sat";if(map)map.setStyle(styleFor())}
 function restoreLook(){if(prevLook){look=prevLook;prevLook=null;sat=look==="sat";if(map)map.setStyle(styleFor())}}
-window.PU={openSnowRules:function(i){openSnow(i)},map:function(){return map},look:function(){return look},setTempLook:setTempLook,restoreLook:restoreLook,setNames:setNames,PL:PL,pick:pick,selected:function(){return sel},toast:toast,padFor:padFor,std:function(){return look==="real"},moveMode:moveMode,
+window.PU={openSnowRules:function(i){openSnow(i)},map:function(){return map},look:function(){return look},setTempLook:setTempLook,restoreLook:restoreLook,setNames:setNames,PL:PL,pick:pick,openApps:function(){openApps()},selected:function(){return sel},toast:toast,padFor:padFor,std:function(){return look==="real"&&!offMode},offline:function(){return offMode},moveMode:moveMode,
   closeAll:function(){closeMenu();closeSheet();closeApps();$("snow").hidden=true;closeCard();if(tour)tourStop()}};
 })();
 </script>
@@ -607,4 +616,6 @@ window.PU={openSnowRules:function(i){openSnow(i)},map:function(){return map},loo
 <script src="vendor/supabase.js"></script>
 <script src="sync.js"></script>
 <script src="ops.js"></script>
+<script src="field.js"></script>
+<script src="team.js"></script>
 </body></html>

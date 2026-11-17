@@ -73,6 +73,8 @@
     ["property", "Property", "places", "point", "\ud83d\udccd", "#22d3ee"], ["parkfix", "Park pin", "places", "point", "\ud83d\udccd", "#22d3ee"],
     ["task", "Task", "work", "record", "\ud83d\udd27", "#f97316"], ["run", "Storm or checklist", "work", "record", "\u2611\ufe0f", "#0ea5e9"],
     ["tick", "Check-off", "work", "record", "\u2714\ufe0f", "#22c55e"], ["roster", "Team names", "work", "record", "\ud83d\udc65", "#7c3aed"],
+    ["recur", "Repeating task", "work", "record", "\ud83d\udd01", "#f97316"], ["settings", "Team settings", "work", "record", "\u2699\ufe0f", "#64748b"],
+    ["frrep", "Field report", "work", "record", "\ud83d\udcdd", "#52759b"], ["frupd", "Field report update", "work", "record", "\ud83d\udcdd", "#52759b"],
     ["parking", "Parking lot", "snow", "polygon", "@poly", "#64748b"], ["storage", "Snow storage area", "snow", "polygon", "@poly", "#93c5fd"], ["noplow", "Do-not-plow area", "snow", "polygon", "@poly", "#ef4444"]];
   var T = {}; TYPES.forEach(function (t) { T[t[0]] = { id: t[0], name: t[1], layer: t[2], geom: t[3], e: t[4], c: t[5] }; });
   var FIELD_NAMES = ["West field", "Burnett field", "East field", "Practice field", "Batting cages"];
@@ -479,7 +481,7 @@
       var b = document.createElement("button"); b.setAttribute("aria-pressed", armed === t[0]);
       var hint = t[3] === "point" ? "tap map" : t[3] === "line" ? "draw line" : "outline";
       b.innerHTML = '<img alt="" src="' + iconURL(t[0]) + '"><span></span><small></small>'; b.querySelector("span").textContent = t[1]; b.querySelector("small").textContent = armed === t[0] ? "adding\u2026" : hint;
-      b.onclick = function () { if (t[3] === "point") { if (armed === t[0]) disarm(); else arm(t[0]); } else { disarm(); startDraw(t[0], { park: focusPark }); } };
+      b.onclick = function () { if (t[3] === "point") { if (armed === t[0]) disarm(); else arm(t[0]); } else { disarm(); startDraw(t[0], { park: focusPark, chain: t[3] === "line" }); } };
       box.appendChild(b); });
   }
   function arm(type) {
@@ -510,7 +512,8 @@
   var draw = null;
   function startDraw(type, o) {
     o = o || {}; var t = T[type]; if (!t) return;
-    draw = { type: type, coords: (o.coords || []).slice(), park: o.park, edit: o.edit || null, label: o.edit ? o.edit.label : "" };
+    if (o.sat && PU.look() !== "sat" && PU.setTempLook) PU.setTempLook("sat");
+    draw = { type: type, coords: (o.coords || []).slice(), park: o.park, edit: o.edit || null, label: o.edit ? o.edit.label : "", chain: !!o.chain, props: o.props || null, after: o.after || null };
     $("drBar").hidden = false; $("xhair").hidden = false; document.body.classList.add("placing");
     if ($("lyBar")) $("lyBar").hidden = true;
     var names = $("drNames"); names.innerHTML = ""; names.hidden = type !== "ballfield" && type !== "cage";
@@ -541,7 +544,7 @@
     $("drInfo").innerHTML = esc((draw.label ? draw.label + " \u00b7 " : "") + t.name) + "<br>" + s;
     var need = t.geom === "line" ? 2 : 3; $("drOk").disabled = c.length < need; }
   function addVertex(ll) { if (!draw) return; draw.coords.push([+ll[0].toFixed(7), +ll[1].toFixed(7)]); drawLayers(); drawInfo(); }
-  function endDraw() { draw = null; clearDrawLayers(); $("drBar").hidden = true; $("xhair").hidden = true; document.body.classList.remove("placing"); if (PU.restoreLook) PU.restoreLook(); if (focusLayer) $("lyBar").hidden = false; }
+  function endDraw(keepLook) { draw = null; clearDrawLayers(); $("drBar").hidden = true; $("xhair").hidden = true; document.body.classList.remove("placing"); if (!keepLook && PU.restoreLook) PU.restoreLook(); if (focusLayer) $("lyBar").hidden = false; }
   $("drUndo").onclick = function () { if (draw && draw.coords.length) { draw.coords.pop(); drawLayers(); drawInfo(); } };
   $("drPt").onclick = function () { var c = PU.map().getCenter(); addVertex([c.lng, c.lat]); };
   $("drSat").onclick = function () { var map = PU.map(), cam = { center: map.getCenter(), zoom: map.getZoom() }; if (PU.look() === "sat") { PU.restoreLook(); this.textContent = "Satellite"; } else { PU.setTempLook("sat"); this.textContent = "Street map"; } map.jumpTo(cam); };
@@ -549,9 +552,12 @@
   $("drOk").onclick = function () {
     if (!draw) return; var d = draw, t = T[d.type], c = d.coords.slice(); if (c.length < (t.geom === "line" ? 2 : 3)) return;
     var rep = t.geom === "polygon" ? centroid(c) : c[Math.floor(c.length / 2)];
-    endDraw();
+    endDraw(d.chain);
     if (d.edit) { var a = d.edit; a.coords = c; a.lng = rep[0]; a.lat = rep[1]; if (d.label) a.label = d.label; saveAsset(a).then(function () { PU.toast("Shape saved \u00b7 " + measure(a)); openAsset(a.id, false); }); }
-    else create({ type: d.type, park: d.park || nearestPark(rep), coords: c, label: d.label }, rep[0], rep[1], null, {}).then(function (a) { PU.toast(t.name + " saved \u00b7 " + measure(a)); });
+    else create({ type: d.type, park: d.park || nearestPark(rep), coords: c, label: d.label }, rep[0], rep[1], null, d.props ? JSON.parse(JSON.stringify(d.props)) : {}, d.chain).then(function (a) {
+      if (d.after) try { d.after(a); } catch (e) {}
+      if (d.chain) { PU.toast(t.name + " saved \u00b7 " + measure(a) + ". Trace the next one, or \u2715 to stop.", 3200); startDraw(d.type, { park: d.park, chain: true, props: d.props, after: d.after }); }
+      else PU.toast(t.name + " saved \u00b7 " + measure(a)); });
   };
 
   /* --- details card --- */
@@ -765,7 +771,7 @@
       a.label = name; a.park = name; if (ll) { a.lng = +(+ll[0]).toFixed(7); a.lat = +(+ll[1]).toFixed(7); } if (rot != null) a.props.rot = Math.round(rot) % 360; if (extra) Object.keys(extra).forEach(function (k) { a.props[k] = extra[k]; }); return saveAsset(a); },
     previewAsset: function (id, ll, rot) { var a = byId(id); if (!a) return; if (ll) { a.lng = ll[0]; a.lat = ll[1]; } if (rot != null) { a.props = a.props || {}; a.props.rot = rot; } refresh(); }, saveProperty: saveProperty, deleteProperty: function (id) { var a = byId(id); return a ? delAsset(a) : Promise.resolve(); },
     onPlaces: function (f) { placeCbs.push(f); }, setReadOnly: setRO, readOnly: function () { return RO; },
-    onChange: function (f) { hooks.push(f); }, backTo: function (f) { backFn = f; }, onClose: function (f) { closeCbs.push(f); }, onCard: function (f) { cardCbs.push(f); }, onCond: function (f) { condCbs.push(f); },
+    onChange: function (f) { hooks.push(f); }, create: create, nearestPark: nearestPark, F: F, LISTS: LISTS, SIZES: SIZES, refresh: refresh, backTo: function (f) { backFn = f; }, onClose: function (f) { closeCbs.push(f); }, onCard: function (f) { cardCbs.push(f); }, onCond: function (f) { condCbs.push(f); },
     all: function () { return ASSETS; }, byId: byId, uid: uid, isBad: isBad, isRec: isRec, condList: condList, summary: summary, measure: measure, fmtDate: fmtDate, layerOf: layerOf, tOf: tOf, meters: meters,
     save: function (a) { if (RO) { PU.toast("View only \u2014 ask an admin for editor access."); return Promise.reject(new Error("view only")); } return saveAsset(a); },
     remove: function (a) { if (RO) { PU.toast("View only \u2014 ask an admin for editor access."); return Promise.reject(new Error("view only")); } return delAsset(a); },

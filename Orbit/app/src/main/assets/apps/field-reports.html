@@ -1,51 +1,73 @@
 <!doctype html><html><head>
 <script src="field-reports-seed.js"></script>
 <script>
-/* Bomba APK: phone-only saving for Field Reports (replaces the Claude account database). */
+/* Field Reports storage. Reports live in the same store as the map's items (as "frrep" and "frupd" records),
+   so Team sync uploads them and brings everyone else's down. Without signing in they simply stay on this phone. */
 (function(){
- var DBN='bomba-field-reports',ST='docs',idb=null,mem={},subs={},ready;
- function open(){return new Promise(function(res,rej){var r=indexedDB.open(DBN,1);
-  r.onupgradeneeded=function(){r.result.createObjectStore(ST,{keyPath:'k'})};
-  r.onsuccess=function(){idb=r.result;var t=idb.transaction(ST).objectStore(ST).getAll();
-   t.onsuccess=function(){t.result.forEach(function(x){(mem[x.c]=mem[x.c]||{})[x.id]=x.data});res()};t.onerror=rej};
-  r.onerror=function(){rej(r.error)}})}
- function seed(){try{if(localStorage.getItem('bomba-fr-seeded')||!window.BOMBA_FR_SEED)return Promise.resolve();}catch(e){return Promise.resolve()}
-  return Promise.all(window.BOMBA_FR_SEED.map(function(x){if(mem[x.c]&&mem[x.c][x.id])return null;(mem[x.c]=mem[x.c]||{})[x.id]=x.data;return put(x.c,x.id,x.data)}))
+ var DBN='pu-assets',ST='assets',OLD='bomba-field-reports',idb=null,mem={reports:{},updates:{}},subs={},ready;
+ var TYPE={reports:'frrep',updates:'frupd'},PRE={reports:'fr_',updates:'fu_'};
+ function LSget(k,d){try{var v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+ function LSset(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+ var prof=LSget('pu-profile',null);
+ var me=prof?(prof.name||String(prof.email||'').split('@')[0]||'me'):'me';
+ var role=prof?prof.role:null;
+ function openDb(){return new Promise(function(res,rej){var r=indexedDB.open(DBN,1);
+  r.onupgradeneeded=function(){var d=r.result;if(!d.objectStoreNames.contains('assets'))d.createObjectStore('assets',{keyPath:'id'});
+   if(!d.objectStoreNames.contains('photos')){var s=d.createObjectStore('photos',{keyPath:'id'});s.createIndex('asset','asset',{unique:false})}};
+  r.onsuccess=function(){idb=r.result;res()};r.onerror=function(){rej(r.error)}})}
+ function loadAll(){return new Promise(function(res,rej){var t=idb.transaction(ST).objectStore(ST).getAll();
+  t.onsuccess=function(){(t.result||[]).forEach(function(x){if(x.type==='frrep')mem.reports[x.id.slice(3)]=x.props&&x.props.doc||{};else if(x.type==='frupd')mem.updates[x.id.slice(3)]=x.props&&x.props.doc||{}});res()};t.onerror=rej})}
+ function getRec(id){return new Promise(function(res){var t=idb.transaction(ST).objectStore(ST).get(id);t.onsuccess=function(){res(t.result||null)};t.onerror=function(){res(null)}})}
+ function put(c,id,data){var key=PRE[c]+id;return getRec(key).then(function(old){return new Promise(function(res,rej){var tx=idb.transaction(ST,'readwrite'),s=tx.objectStore(ST);
+  if(data===null){s.delete(key);if(old&&old.synced){var d=LSget('pu-del',[]);d.push({id:key,layer:'work',type:TYPE[c]});LSset('pu-del',d)}}
+  else s.put({id:key,type:TYPE[c],park:c==='reports'?(data.loc||data.site||''):'',label:c==='reports'?String(data.title||'').slice(0,80):String(data.status||''),notes:'',cond:undefined,
+   created:old?old.created:(Date.parse(data.created)||Date.now()),updated:Date.now(),dirty:true,synced:old?old.synced:false,photoCount:0,props:{doc:data}});
+  tx.oncomplete=function(){res()};tx.onerror=function(){rej(tx.error)}})})}
+ /* first run: bring over reports saved by the older phone-only version, then the starter examples */
+ function migrate(){if(LSget('pu-fr-moved',0))return Promise.resolve();
+  return new Promise(function(res){var r;try{r=indexedDB.open(OLD,1)}catch(e){return res([])}
+   r.onupgradeneeded=function(){r.result.createObjectStore('docs',{keyPath:'k'})};
+   r.onsuccess=function(){var d=r.result;try{var t=d.transaction('docs').objectStore('docs').getAll();t.onsuccess=function(){res(t.result||[]);d.close()};t.onerror=function(){res([])}}catch(e){res([])}};
+   r.onerror=function(){res([])}}).then(function(old){var q=Promise.resolve();
+   old.forEach(function(x){if(!TYPE[x.c]||mem[x.c][x.id])return;mem[x.c][x.id]=x.data;q=q.then(function(){return put(x.c,x.id,x.data)})});
+   return q}).then(function(){LSset('pu-fr-moved',1)})}
+ function seed(){if(LSget('bomba-fr-seeded',null)||!window.BOMBA_FR_SEED)return Promise.resolve();
+  return Promise.all(window.BOMBA_FR_SEED.map(function(x){if(!TYPE[x.c]||mem[x.c][x.id])return null;mem[x.c][x.id]=x.data;return put(x.c,x.id,x.data)}))
    .then(function(){try{localStorage.setItem('bomba-fr-seeded','1')}catch(e){}})}
- ready=open().then(seed);
- function put(c,id,data){return new Promise(function(res,rej){var tx=idb.transaction(ST,'readwrite');
-  if(data===null)tx.objectStore(ST).delete(c+'/'+id);else tx.objectStore(ST).put({k:c+'/'+id,c:c,id:id,data:data});
-  tx.oncomplete=function(){res()};tx.onerror=function(){rej(tx.error)}})}
+ ready=openDb().then(loadAll).then(migrate).then(seed);
  function emit(c){var m=mem[c]||{},docs=Object.keys(m).map(function(id){var d=m[id];return{id:id,data:function(){return JSON.parse(JSON.stringify(d))}}});
   (subs[c]||[]).forEach(function(f){try{f({docs:docs})}catch(e){}})}
  function newId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8)}
- function col(c){return{
-  add:function(data){var id=newId();return ready.then(function(){(mem[c]=mem[c]||{})[id]=data;return put(c,id,data)}).then(function(){emit(c);return{id:id}})},
+ function col(c){mem[c]=mem[c]||{};return{
+  add:function(data){var id=newId();return ready.then(function(){mem[c][id]=data;return put(c,id,data)}).then(function(){emit(c);return{id:id}})},
   doc:function(id){return{
-   set:function(data){return ready.then(function(){(mem[c]=mem[c]||{})[id]=data;return put(c,id,data)}).then(function(){emit(c)})},
-   update:function(p){return ready.then(function(){var d=Object.assign({},(mem[c]||{})[id]||{},p);(mem[c]=mem[c]||{})[id]=d;return put(c,id,d)}).then(function(){emit(c)})},
-   delete:function(){return ready.then(function(){if(mem[c])delete mem[c][id];return put(c,id,null)}).then(function(){emit(c)})}}},
+   set:function(data){return ready.then(function(){mem[c][id]=data;return put(c,id,data)}).then(function(){emit(c)})},
+   update:function(p){return ready.then(function(){var d=Object.assign({},mem[c][id]||{},p);mem[c][id]=d;return put(c,id,d)}).then(function(){emit(c)})},
+   delete:function(){return ready.then(function(){delete mem[c][id];return put(c,id,null)}).then(function(){emit(c)})}}},
   onSnapshot:function(cb,err){(subs[c]=subs[c]||[]).push(cb);ready.then(function(){emit(c)}).catch(function(e){err&&err(e)});
    return function(){subs[c]=(subs[c]||[]).filter(function(f){return f!==cb})}}}}
  var db={collection:col};
  function shrink(blob){return new Promise(function(res,rej){var u=URL.createObjectURL(blob),im=new Image();
-  im.onload=function(){var M=1400,sc=Math.min(1,M/Math.max(im.width,im.height)),cv=document.createElement('canvas');
+  im.onload=function(){var M=1200,sc=Math.min(1,M/Math.max(im.width,im.height)),cv=document.createElement('canvas');
    cv.width=Math.round(im.width*sc);cv.height=Math.round(im.height*sc);cv.getContext('2d').drawImage(im,0,0,cv.width,cv.height);
-   URL.revokeObjectURL(u);res(cv.toDataURL('image/jpeg',.82))};im.onerror=function(){URL.revokeObjectURL(u);rej(new Error('photo'))};im.src=u})}
+   URL.revokeObjectURL(u);res(cv.toDataURL('image/jpeg',.72))};im.onerror=function(){URL.revokeObjectURL(u);rej(new Error('photo'))};im.src=u})}
  var assets={upload:function(b){return shrink(b).then(function(url){return{url:url}})}};
- function share(name,mime,text){if(window.BombaNative&&BombaNative.share){BombaNative.share(name,mime,text);return Promise.resolve()}
+ function share(name,mime,text){if(window.AndroidApp&&AndroidApp.saveText){AndroidApp.saveText(name,text);return Promise.resolve()}
   var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;a.click();return Promise.resolve()}
  var downloads={save:function(o){var n=o.filename||'export.txt';return share(n,/\.csv$/i.test(n)?'text/csv':'text/plain',String(o.data))}};
- var user={id:function(){return Promise.resolve('me')},isOwner:function(){return Promise.resolve(true)},
-  can:function(){return Promise.resolve(true)},profiles:function(){return Promise.resolve({})}};
+ /* who is who: reports are signed with the person's team name */
+ var user={id:function(){return Promise.resolve(me)},isOwner:function(){return Promise.resolve(!role||role==='admin'||role==='editor')},
+  can:function(){return Promise.resolve(!role||role==='admin'||role==='editor')},
+  profiles:function(ids){var o={};(ids||[]).forEach(function(i){o[i]={name:i==='me'?'Someone on this phone':i==='Resident'?'A resident':/^u_/.test(i)?'A teammate':i}});return Promise.resolve(o)}};
  var LIB={db:db,assets:assets,downloads:downloads,user:user};
  window.claude={use:function(n){return Promise.resolve(LIB[n]||null)}};
+ window.bombaFRSynced=!!prof;
  /* backup + restore */
  window.bombaBackup=function(){return ready.then(function(){var out=[];Object.keys(mem).forEach(function(c){Object.keys(mem[c]).forEach(function(id){out.push({c:c,id:id,data:mem[c][id]})})});
   var d=new Date(),day=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   return share('field-reports-backup-'+day+'.json','application/json',JSON.stringify({app:'field-reports',version:1,exported:d.toISOString(),docs:out}))})};
  window.bombaRestore=function(text){var j=JSON.parse(text);if(!j||j.app!=='field-reports'||!Array.isArray(j.docs))throw new Error('Not a Field Reports backup');
-  return ready.then(function(){var cs={};return Promise.all(j.docs.map(function(x){(mem[x.c]=mem[x.c]||{})[x.id]=x.data;cs[x.c]=1;return put(x.c,x.id,x.data)})).then(function(){Object.keys(cs).forEach(emit);return j.docs.length})})};
+  return ready.then(function(){var cs={};return Promise.all(j.docs.map(function(x){if(!TYPE[x.c])return null;mem[x.c][x.id]=x.data;cs[x.c]=1;return put(x.c,x.id,x.data)})).then(function(){Object.keys(cs).forEach(emit);return j.docs.length})})};
 })();
 </script>
 <meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
@@ -358,7 +380,7 @@ $('cat').innerHTML+=opts(CATS);
 $('filter').innerHTML='<option value="">All categories</option>'+opts(CATS);
 $('loc').innerHTML='<option value="">Choose a property</option><optgroup label="Pools">'+opts(POOLS)+'</optgroup><optgroup label="Parks and fields">'+opts(PARKS)+'</optgroup><option>Other</option>';
 $('loc').onchange=function(){var o=this.value==='Other';$('locOther').hidden=!o;if(o)$('locOther').focus()};
-$('today').textContent=new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})+' · v16';
+$('today').textContent=new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})+' · v17'+(window.bombaFRSynced?' · shared with your team':' · on this phone only (sign in on the map to share)');
 
 var cdb=null,assets=null,dl=null,user=null,myId='',isOwner=true,canWrite=true,loaded=false;
 var reports=[],updates=[],byReport={},names={},pendingNames=false;

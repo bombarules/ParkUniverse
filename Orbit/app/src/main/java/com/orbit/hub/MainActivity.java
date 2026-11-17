@@ -6,6 +6,15 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.print.PrintAttributes;
+import android.content.ClipData;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import java.text.SimpleDateFormat;
+import java.util.Locale;
 import android.print.PrintManager;
 import android.app.role.RoleManager;
 import android.content.ContentValues;
@@ -64,6 +73,9 @@ public class MainActivity extends Activity {
     private static final int REQ_SAVE = 52;
     private static final int REQ_LOCATION = 53;
     private static final int REQ_NOTIFY = 54;
+    private static final int REQ_MEDIA_LOC = 55;
+    private static final int REQ_GEO = 56;
+    private String pendingOpen = "due";
     private static final String DUE_CHANNEL = "due";
     private static final String EXTRA_OPEN = "open";
     private Uri lastCapture;
@@ -96,6 +108,7 @@ public class MainActivity extends Activity {
         int zoom = Math.round(getResources().getConfiguration().fontScale * 100f);
         settings.setTextZoom(Math.max(85, Math.min(zoom, 115)));
         web.setWebViewClient(new AppClient());
+        watchNetwork(settings);
         web.addJavascriptInterface(new Bridge(), "BombaNative");
         // Bridges the built-in apps were written for: PoolCommand and VoluntTold.
         web.addJavascriptInterface(new PoolBridge(), "PoolBridge");
@@ -111,7 +124,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState == null) {
             // Opened from the "what's due" notification: go straight to that list.
             String open = getIntent() != null ? getIntent().getStringExtra(EXTRA_OPEN) : null;
-            web.loadUrl("due".equals(open) ? START + "#due" : START);
+            web.loadUrl(open != null ? START + "#" + open.replaceAll("[^a-z]", "") : START);
         }
     }
 
@@ -131,6 +144,16 @@ public class MainActivity extends Activity {
                 fileCallback = null;
             }
             cameraUri = null;
+            return;
+        }
+        if (requestCode == REQ_GEO) {
+            List<Uri> uris = new ArrayList<>();
+            if (resultCode == RESULT_OK && data != null) {
+                ClipData cd = data.getClipData();
+                if (cd != null) for (int k = 0; k < cd.getItemCount(); k++) uris.add(cd.getItemAt(k).getUri());
+                else if (data.getData() != null) uris.add(data.getData());
+            }
+            if (uris.isEmpty()) geoDone("{\"n\":0}"); else readGeoPhotos(uris);
             return;
         }
         if (requestCode == REQ_SAVE) {
@@ -178,28 +201,124 @@ public class MainActivity extends Activity {
             geoCallback = null;
             geoOrigin = null;
         }
+        if (requestCode == REQ_MEDIA_LOC) { launchGeoPicker(); return; }
         if (requestCode == REQ_NOTIFY) {
             boolean ok = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
-            if (ok && pendingDueTitle != null) postDue(pendingDueTitle, pendingDueText);
+            if (ok && pendingDueTitle != null) postNote(pendingOpen.equals("due") ? 7001 : 7002, pendingDueTitle, pendingDueText, pendingOpen);
             pendingDueTitle = null;
             pendingDueText = null;
         }
     }
 
+    /** No signal: show what the WebView already has saved (map pieces seen before) instead of blank tiles. */
+    private void watchNetwork(final WebSettings settings) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return;
+            Network n = cm.getActiveNetwork();
+            NetworkCapabilities nc = n == null ? null : cm.getNetworkCapabilities(n);
+            boolean on = nc != null && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+            settings.setCacheMode(on ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_CACHE_ELSE_NETWORK);
+            cm.registerDefaultNetworkCallback(new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) { runOnUiThread(() -> settings.setCacheMode(WebSettings.LOAD_DEFAULT)); }
+                @Override public void onLost(Network network) { runOnUiThread(() -> settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK)); }
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Photos -> items: a gallery picker that keeps each photo's GPS position. */
+    private void launchGeoPicker() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("image/*");
+            i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            startActivityForResult(i, REQ_GEO);
+        } catch (Exception e) {
+            geoDone("{\"error\":\"Couldn't open the photo picker\"}");
+        }
+    }
+
+    private void geoDone(String json) {
+        final String js = "window.bombaGeoPhotosDone&&window.bombaGeoPhotosDone(" + json + ")";
+        web.post(() -> web.evaluateJavascript(js, null));
+    }
+
+    private void readGeoPhotos(final List<Uri> uris) {
+        new Thread(() -> {
+            int sent = 0;
+            SimpleDateFormat fmt = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US);
+            for (Uri u : uris) {
+                try {
+                    Uri src = u;
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        try {
+                            Uri media = MediaStore.getMediaUri(this, u);
+                            if (media != null && checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                                src = MediaStore.setRequireOriginal(media);
+                            }
+                        } catch (Exception ignored) { src = u; }
+                    }
+                    double lat = Double.NaN, lng = Double.NaN; long t = 0; int rot = 0;
+                    InputStream in;
+                    try { in = getContentResolver().openInputStream(src); } catch (Exception e) { src = u; in = getContentResolver().openInputStream(u); }
+                    if (in == null) continue;
+                    try {
+                        ExifInterface ex = new ExifInterface(in);
+                        float[] ll = new float[2];
+                        if (ex.getLatLong(ll)) { lat = ll[0]; lng = ll[1]; }
+                        String dt = ex.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL);
+                        if (dt == null) dt = ex.getAttribute(ExifInterface.TAG_DATETIME);
+                        if (dt != null) { try { t = fmt.parse(dt).getTime(); } catch (Exception ignored) { } }
+                        int o = ex.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                        rot = o == ExifInterface.ORIENTATION_ROTATE_90 ? 90 : o == ExifInterface.ORIENTATION_ROTATE_180 ? 180 : o == ExifInterface.ORIENTATION_ROTATE_270 ? 270 : 0;
+                    } catch (Exception ignored) {
+                    } finally { try { in.close(); } catch (Exception ignored) { } }
+                    BitmapFactory.Options bo = new BitmapFactory.Options();
+                    bo.inJustDecodeBounds = true;
+                    try (InputStream s1 = getContentResolver().openInputStream(u)) { BitmapFactory.decodeStream(s1, null, bo); }
+                    int sample = 1;
+                    while (Math.max(bo.outWidth, bo.outHeight) / (sample * 2) >= 1600) sample *= 2;
+                    BitmapFactory.Options bo2 = new BitmapFactory.Options();
+                    bo2.inSampleSize = sample;
+                    Bitmap bmp;
+                    try (InputStream s2 = getContentResolver().openInputStream(u)) { bmp = BitmapFactory.decodeStream(s2, null, bo2); }
+                    if (bmp == null) continue;
+                    if (rot != 0) { Matrix m = new Matrix(); m.postRotate(rot); Bitmap r = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true); bmp.recycle(); bmp = r; }
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 85, out);
+                    bmp.recycle();
+                    JSONObject o = new JSONObject();
+                    if (!Double.isNaN(lat) && !(lat == 0 && lng == 0)) { o.put("lat", lat); o.put("lng", lng); }
+                    if (t > 0) o.put("t", t);
+                    o.put("b64", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
+                    final String js = "window.bombaGeoPhoto&&window.bombaGeoPhoto(" + o.toString() + ")";
+                    web.post(() -> web.evaluateJavascript(js, null));
+                    sent++;
+                } catch (Exception ignored) {
+                }
+            }
+            geoDone("{\"n\":" + sent + "}");
+        }).start();
+    }
+
     /** One quiet notification a day when tests, trees or tasks are due; tapping it opens the list. */
-    private void postDue(String title, String text) {
+    private void postDue(String title, String text) { postNote(7001, title, text, "due"); }
+
+    private void postNote(int id, String title, String text, String openWhat) {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (nm == null) return;
             if (Build.VERSION.SDK_INT >= 26) {
-                NotificationChannel ch = new NotificationChannel(DUE_CHANNEL, "What's due", NotificationManager.IMPORTANCE_DEFAULT);
-                ch.setDescription("Backflow tests, tree dates and tasks that are due or overdue");
+                NotificationChannel ch = new NotificationChannel(DUE_CHANNEL, "Work reminders", NotificationManager.IMPORTANCE_DEFAULT);
+                ch.setDescription("What's due, winter storm warnings and new resident reports");
                 nm.createNotificationChannel(ch);
             }
             Intent open = new Intent(this, MainActivity.class);
-            open.putExtra(EXTRA_OPEN, "due");
+            open.putExtra(EXTRA_OPEN, openWhat == null ? "due" : openWhat);
             open.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            PendingIntent pi = PendingIntent.getActivity(this, 1, open,
+            PendingIntent pi = PendingIntent.getActivity(this, id, open,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             Notification.Builder b = Build.VERSION.SDK_INT >= 26
                     ? new Notification.Builder(this, DUE_CHANNEL) : new Notification.Builder(this);
@@ -209,7 +328,7 @@ public class MainActivity extends Activity {
                     .setStyle(new Notification.BigTextStyle().bigText(text))
                     .setContentIntent(pi)
                     .setAutoCancel(true);
-            nm.notify(7001, b.build());
+            nm.notify(id, b.build());
         } catch (Exception ignored) {
         }
     }
@@ -218,14 +337,16 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        final boolean due = "due".equals(intent.getStringExtra(EXTRA_OPEN));
+        final String openWhat = intent.getStringExtra(EXTRA_OPEN);
+        final boolean due = openWhat != null;
         // Home button pressed while Park Universe is the home app: back to the map.
         if (web != null) {
             web.post(() -> {
                 if (due) {
                     String u0 = web.getUrl();
-                    if (u0 == null || !u0.startsWith(START)) web.loadUrl(START + "#due");
-                    else web.evaluateJavascript("window.bombaOpen&&window.bombaOpen('due')", null);
+                    String w = openWhat.replaceAll("[^a-z]", "");
+                    if (u0 == null || !u0.startsWith(START)) web.loadUrl(START + "#" + w);
+                    else web.evaluateJavascript("window.bombaOpen&&window.bombaOpen('" + w + "')", null);
                     return;
                 }
                 String u = web.getUrl();
@@ -516,10 +637,41 @@ public class MainActivity extends Activity {
                         && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     pendingDueTitle = title;
                     pendingDueText = text;
+                    pendingOpen = "due";
                     requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY);
                     return;
                 }
                 postDue(title, text);
+            });
+        }
+
+        /** Other reminders (winter storm warning, resident reports). Tapping opens that screen. */
+        @JavascriptInterface
+        public void notify(final String title, final String text, final String openWhat) {
+            runOnUiThread(() -> {
+                String w = openWhat == null ? "work" : openWhat.replaceAll("[^a-z]", "");
+                if (Build.VERSION.SDK_INT >= 33
+                        && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    pendingDueTitle = title;
+                    pendingDueText = text;
+                    pendingOpen = w;
+                    requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY);
+                    return;
+                }
+                postNote(w.equals("storm") ? 7003 : 7004, title, text, w);
+            });
+        }
+
+        /** Photos -> items: asks once for access to photo locations, then opens the picker. */
+        @JavascriptInterface
+        public void pickGeoPhotos() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= 29
+                        && checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{android.Manifest.permission.ACCESS_MEDIA_LOCATION}, REQ_MEDIA_LOC);
+                    return;
+                }
+                launchGeoPicker();
             });
         }
 

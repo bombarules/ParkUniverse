@@ -267,11 +267,38 @@
    * 3 + 4. STORMS AND CHECKLISTS  (a "run" is a storm or a checklist; a "tick" is one check-off)
    * ====================================================================== */
   var CLEAR = { walk: 1, route: 1, ramp: 1, smailbox: 1, entrance: 1, exitgate: 1, steps: 1, icemelt: 1, shovel: 1, parking: 1 };
-  var KIND = { storm: { n: "Snow storm", e: "\u2744\ufe0f", verb: "cleared" }, startup: { n: "Irrigation spring startup", e: "\ud83c\udf31", verb: "done" }, blowout: { n: "Irrigation fall blowout", e: "\ud83c\udf2c\ufe0f", verb: "done" } };
+  var KIND = { storm: { n: "Snow storm", e: "\u2744\ufe0f", verb: "cleared" }, startup: { n: "Irrigation spring startup", e: "\ud83c\udf31", verb: "done" }, blowout: { n: "Irrigation fall blowout", e: "\ud83c\udf2c\ufe0f", verb: "done" },
+    pclose: { n: "Pool winterizing", e: "\u2744\ufe0f", verb: "done", pool: true }, popen: { n: "Pool opening", e: "\u2600\ufe0f", verb: "done", pool: true } };
+  /* pool checklists: the same steps for every pool, plus steps the team adds (saved in the team settings record) */
+  var POOL_STEPS = {
+    pclose: [["test", "Test and balance the water, then shock it", "pH, alkalinity and calcium in range first"], ["clean", "Brush, vacuum and skim; empty skimmer and pump baskets"],
+      ["filters", "Backwash or clean the filters, then drain the filter tanks"], ["lower", "Lower the water below the skimmers and return lines"],
+      ["blow", "Blow out the skimmer, return and main drain lines and plug them"], ["anti", "Add pool antifreeze to the lines", "Non-toxic (propylene glycol) only"],
+      ["ice", "Put ice compensators or air pillows in the skimmers and pool"], ["drain", "Drain the pumps, heater and chemical feeders", "Keep the drain plugs in the pump basket"],
+      ["power", "Shut off and lock out power to pumps, heater and controllers; close the heater gas valve"], ["chem", "Store chemicals dry and cool, oxidizers apart from acids; update the inventory"],
+      ["deck", "Take out ladders, rails, guard chairs, lane lines and boards; store them"], ["cover", "Put on the winter cover; post Closed signs and lock the gates"],
+      ["photos", "Take photos of the plant room and deck for spring"]],
+    popen: [["gates", "Check the fence and gates close and latch by themselves; signs posted"], ["cover", "Take off, clean and store the winter cover"],
+      ["shell", "Look over the shell, tile, coping and deck; log any cracks"], ["plugs", "Put back drain plugs, gauges and baskets; take out winter plugs and ice compensators"],
+      ["drains", "Check drain and suction covers are in place, undamaged and within their service date"], ["power", "Restore power and gas; check the heater and electrical; test the GFCIs"],
+      ["fill", "Fill to mid-skimmer, prime the pumps, start circulation and check for leaks"], ["filters", "Clean or backwash the filters; check flow meters and pressure gauges"],
+      ["chem", "Start the chemical feed, balance and shock; log the first readings"], ["deck", "Put back ladders, rails, guard chairs and lane lines; check every bolt"],
+      ["safety", "Check rescue tubes, first aid kit, AED and the emergency phone"], ["clear", "Run 24 hours; the main drain must be clearly visible"],
+      ["inspect", "Book the health department inspection"]] };
+  function settings() { return A.byId("settings") || { id: "settings", type: "settings", created: Date.now(), photoCount: 0, park: "", label: "Team settings", notes: "", props: {} }; }
+  function poolExtra(kind) { return (((settings().props || {}).steps || {})[kind] || []); }
   function runs(kind) { return recs("run").filter(function (r) { return (r.props || {}).kind === kind; }); }
+  function startStorm(name, extra) { var w = needWho(), r = { id: "run-" + A.uid(), type: "run", created: Date.now(), photoCount: 0, park: "", label: name || "Storm " + new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" }), notes: "", cond: "Open", props: Object.assign({ kind: "storm", started: Date.now(), ended: "", by: w }, extra || {}) };
+    return A.save(r).then(function () { refreshAll(); return r; }); }
   function activeStorm() { return runs("storm").filter(function (r) { return !(r.props || {}).ended; }).sort(function (x, y) { return ((x.props || {}).started || 0) - ((y.props || {}).started || 0); })[0] || null; }
   function tickId(run, key) { return "tk-" + run.id + "-" + String(key).replace(/[^A-Za-z0-9]+/g, "_"); }
-  function ticksOf(run) { var m = {}; recs("tick").forEach(function (t) { var p = t.props || {}; if (p.run === run.id) m[p.item] = t; }); return m; }
+  function ticksOf(run) { var m = {}; recs("tick").forEach(function (t) { var p = t.props || {}; if (p.run === run.id && !p.usage) m[p.item] = t; }); return m; }
+  /* crew hours and ice melt per park per storm */
+  function useId(run, park) { return "use-" + run.id + "-" + slug(park); }
+  function usageOf(run) { var m = {}; recs("tick").forEach(function (t) { var p = t.props || {}; if (p.run === run.id && p.usage) m[t.park] = t; }); return m; }
+  function usageTot(run) { var u = usageOf(run), h = 0, bg = 0; Object.keys(u).forEach(function (k) { h += +u[k].props.hours || 0; bg += +u[k].props.bags || 0; }); return { hours: Math.round(h * 10) / 10, bags: Math.round(bg * 10) / 10 }; }
+  function money(n) { return "$" + (Math.round(n * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
+  function costOf(t) { var sp = settings().props || {}, c = 0, any = false; if (+sp.bagCost) { c += t.bags * sp.bagCost; any = true; } if (+sp.hourRate) { c += t.hours * sp.hourRate; any = true; } return any ? c : null; }
   function snowItems(park) { return things().filter(function (a) { return A.layerOf(a) === "snow" && CLEAR[a.type] && a.cond !== "Retired" && (!park || a.park === park); }); }
   function pri(a) { var v = parseInt(String((a.props || {}).priority || "2"), 10); return isNaN(v) ? 2 : v; }
   /* the steps of a run at one park */
@@ -279,6 +306,8 @@
     if (k === "storm") { var list = snowItems(park).sort(function (x, y) { return pri(x) - pri(y) || x.type.localeCompare(y.type) || nameOf(x).localeCompare(nameOf(y)); });
       if (!list.length) return [{ key: "park:" + slug(park), text: "Whole park cleared", sub: "Nothing is mapped in this park\u2019s Snow tab yet, so it is one check." }];
       return list.map(function (a) { return { key: a.id, a: a, text: nameOf(a), sub: [A.tOf(a).name !== nameOf(a) ? A.tOf(a).name : "", A.summary(a)].filter(Boolean).join(" \u00b7 ") }; }); }
+    if (KIND[k] && KIND[k].pool) return POOL_STEPS[k].map(function (x) { return { key: "step:" + x[0], text: x[1], sub: x[2] || "" }; })
+      .concat(poolExtra(k).map(function (x) { return { key: "step:c-" + slug(x), text: x, sub: "Added by the team" }; }));
     var ir = things().filter(function (a) { return A.layerOf(a) === "irrigation" && a.park === park && a.cond !== "Off"; }), of = function (ty) { return ir.filter(function (a) { return a.type === ty; }).sort(function (x, y) { return String((x.props || {}).zone || "").localeCompare(String((y.props || {}).zone || ""), undefined, { numeric: true }) || nameOf(x).localeCompare(nameOf(y)); }); };
     var st = function (key, text, sub) { return { key: "step:" + key, text: text, sub: sub || "" }; }, it = function (a, text, sub) { return { key: a.id, a: a, text: text, sub: sub || "" }; };
     var zn = function (a) { var z = (a.props || {}).zone; return z ? "Zone " + z : nameOf(a); }, out = [];
@@ -314,8 +343,7 @@
       '<p class="src">' + plural(snowItems().length, "snow item") + " mapped across " + plural(Object.keys(snowItems().reduce(function (m, a) { m[a.park] = 1; return m; }, {})).length, "park") + ".</p>";
     if (act) { stack[stack.length - 1] = { fn: screenRun(act.id) }; return draw(); }
     if ($("stName")) { $("stName").value = "Storm " + new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      $("stGo").onclick = function () { var w = needWho(), r = { id: "run-" + A.uid(), type: "run", created: Date.now(), photoCount: 0, park: "", label: $("stName").value.trim() || "Storm", notes: "", cond: "Open", props: { kind: "storm", started: Date.now(), ended: "", by: w } };
-        A.save(r).then(function () { refreshAll(); stack[stack.length - 1] = { fn: screenRun(r.id) }; draw(); PU.toast("Storm started. Check places off as they\u2019re cleared."); }, function () {}); }; }
+      $("stGo").onclick = function () { startStorm($("stName").value.trim()).then(function (r) { stack[stack.length - 1] = { fn: screenRun(r.id) }; draw(); PU.toast("Storm started. Check places off as they\u2019re cleared."); }, function () {}); }; }
     if (past.length) { var h = document.createElement("div"); h.className = "as-sec"; h.textContent = "Past storms"; b.appendChild(h);
       past.forEach(function (r) { var tk = ticksOf(r), row = document.createElement("button"); row.className = "op-row"; row.innerHTML = '<img alt="" src="' + A.iconURL("run") + '"><span><b></b><small></small></span><span class="go">Log</span>';
         row.querySelector("b").textContent = r.label; row.querySelector("small").textContent = new Date(r.props.started).toLocaleDateString() + " \u00b7 " + plural(Object.keys(tk).length, "check-off") + " \u00b7 " + hours(r.props.started, r.props.ended);
@@ -334,7 +362,8 @@
     b.innerHTML = '<div class="op-note' + (ended ? "" : " warn") + '"><b>' + (ended ? "Ended" : "In progress") + "</b> \u00b7 started " + esc(niceStamp(run.props.started)) + (run.props.by ? " by " + esc(run.props.by) : "") + (ended ? " \u00b7 ended " + esc(niceStamp(run.props.ended)) : "") + " \u00b7 " + hours(run.props.started, run.props.ended) +
       '<div class="op-bar"><i style="width:' + (tot ? Math.round(dn / tot * 100) : parks.length ? Math.round(full / parks.length * 100) : 0) + '%"></i></div>' + (tot ? dn + " of " + tot + " mapped items " + KIND[k].verb + " \u00b7 " : "") + full + " of " + parks.length + " parks finished</div>" +
       '<input class="search" id="rnQ" type="search" placeholder="Find a park" autocomplete="off" style="margin-bottom:4px"><div id="rnRows"></div>' +
-      (ro() ? "" : '<div class="as-act">' + (ended ? '<button id="rnRe">Reopen</button>' : '<button class="p" id="rnEnd">End storm</button>') + '<button class="d" id="rnDel">Delete</button></div>');
+      (ro() ? "" : '<div class="as-act">' + (ended ? '<button id="rnRe">Reopen</button>' : '<button class="p" id="rnEnd">' + (KIND[k].pool || k !== "storm" ? "Mark finished" : "End storm") + '</button>') + '<button class="d" id="rnDel">Delete</button></div>');
+    if (k === "storm") { var ut = usageTot(run), uc = costOf(ut); if (ut.hours || ut.bags) $("rnRows").insertAdjacentHTML("beforebegin", '<p class="src" style="margin:2px 0 6px">\u23f1 ' + ut.hours + " crew hours \u00b7 \ud83e\uddc2 " + ut.bags + " bags of ice melt" + (uc != null ? " \u00b7 about " + money(uc) : "") + "</p>"); }
     $("rnQ").value = runQ; $("rnQ").oninput = function () { runQ = this.value; rows(); };
     function rows() { var box = $("rnRows"), q = runQ.trim().toLowerCase(); box.innerHTML = "";
       var list = parks.filter(function (p) { return !q || p.n.toLowerCase().indexOf(q) >= 0; });
@@ -344,7 +373,7 @@
         r.querySelector("b").textContent = p.n; r.querySelector("small").textContent = p.mapped ? plural(p.all, "mapped item") : "nothing mapped \u00b7 one check for the park";
         r.onclick = function () { push(screenRunPark(run.id, p.n)); }; box.appendChild(r); });
       if (!list.length) box.innerHTML = '<div class="empty">No park matches.</div>'; }
-    rows();
+    rows(); if (k === "storm") costBox(b);
     if ($("rnEnd")) $("rnEnd").onclick = function () { if (!confirm("End " + run.label + "? The log stays and can be downloaded any time.")) return; run.props.ended = Date.now(); run.cond = "Done"; A.save(run).then(function () { refreshAll(); redraw(); PU.toast("Storm ended."); }); };
     if ($("rnRe")) $("rnRe").onclick = function () { run.props.ended = ""; run.cond = "Open"; A.save(run).then(function () { refreshAll(); redraw(); }); };
     if ($("rnDel")) $("rnDel").onclick = function () { if (!confirm("Delete " + run.label + " and all of its check-offs? This can\u2019t be undone.")) return;
@@ -354,7 +383,7 @@
   function screenRunPark(id, park) { return function () {
     var run = A.byId(id); if (!run) { stack.pop(); return draw(); } var k = run.props.kind, tk = ticksOf(run), list = steps(run, park), b = $("opBody"), locked = ro() || (k === "storm" && !!run.props.ended);
     var dn = list.filter(function (s) { return tk[s.key]; }).length; title(park);
-    if (k === "storm") action("Map", function () { A.openLayer("snow", park); }); else action("Map", function () { A.openLayer("irrigation", park); });
+    if (k === "storm") action("Map", function () { A.openLayer("snow", park); }); else if (KIND[k].pool) { if (POOL_ID[park]) action("PoolCommand", function () { location.href = "apps/pool-command.html#pool=" + POOL_ID[park][1]; }); } else action("Map", function () { A.openLayer("irrigation", park); });
     b.innerHTML = '<div class="op-note">' + KIND[k].e + " " + esc(run.label) + ' \u00b7 <b id="rpN"></b><div class="op-bar"><i id="rpBar"></i></div></div><div id="rpRows"></div>' +
       (locked || !list.length ? "" : '<div class="as-act"><button class="p" id="rpAll">\u2713 All ' + KIND[k].verb + " here</button></div>") + (k === "storm" ? "" : '<div id="rpCov"></div>');
     function head() { $("rpN").textContent = dn + " of " + list.length + " " + KIND[k].verb; $("rpBar").style.width = (list.length ? Math.round(dn / list.length * 100) : 0) + "%"; }
@@ -369,20 +398,40 @@
       if (s.a) { r.querySelector("span").onclick = function () { openThing(s.a.id); }; r.querySelector("span").style.cursor = "pointer"; }
       $("rpRows").appendChild(r); });
     if ($("rpAll")) $("rpAll").onclick = function () { var q = Promise.resolve(); list.forEach(function (s) { if (!tk[s.key]) q = q.then(function () { return setTick(run, park, s, true); }); }); q.then(function () { refreshBadges(); redraw(); PU.toast(park + ": all " + KIND[k].verb + "."); }); };
-    if (k !== "storm") coverageBox(park, $("rpCov"));
+    if (k === "startup" || k === "blowout") coverageBox(park, $("rpCov"));
+    if (k === "storm") usageBox(run, park, b, locked);
   }; }
+  function usageBox(run, park, b, locked) { var u = usageOf(run)[park], p = u ? u.props : {};
+    var box = document.createElement("div"); box.className = "op-box"; box.innerHTML = '<h4>Crew time and ice melt here</h4><div class="as-2"><div class="as-f"><label for="usH">Crew hours</label><input id="usH" type="number" inputmode="decimal" min="0" step="0.25" placeholder="e.g. 2.5"></div>' +
+      '<div class="as-f"><label for="usB">Ice melt bags</label><input id="usB" type="number" inputmode="decimal" min="0" step="0.5" placeholder="e.g. 3"></div></div><p class="src" id="usS"></p>';
+    b.appendChild(box); $("usH").value = p.hours || ""; $("usB").value = p.bags || ""; $("usS").textContent = u ? "Saved " + niceStamp(p.t) + (p.by ? " by " + p.by : "") : "Add everyone\u2019s hours together (2 people \u00d7 1.5 h = 3).";
+    if (locked) { $("usH").disabled = $("usB").disabled = true; return; }
+    var save = function () { var w = needWho(), rec = A.byId(useId(run, park)) || { id: useId(run, park), type: "tick", created: Date.now(), photoCount: 0, park: park, label: "", notes: "", props: { run: run.id, item: "usage", usage: true } };
+      rec.props.hours = Math.max(0, +$("usH").value || 0); rec.props.bags = Math.max(0, +$("usB").value || 0); rec.props.by = w; rec.props.t = Date.now();
+      A.save(rec).then(function () { $("usS").textContent = "Saved " + niceStamp(rec.props.t) + " by " + w; }, function () {}); };
+    $("usH").onchange = save; $("usB").onchange = save; }
+  function costBox(b) { if (ro()) return; var sp = settings().props || {}, box = document.createElement("div"); box.className = "op-box";
+    box.innerHTML = '<h4>Costs for the board report (optional)</h4><div class="as-2"><div class="as-f"><label for="csB">Cost per bag ($)</label><input id="csB" type="number" inputmode="decimal" min="0" step="0.01"></div><div class="as-f"><label for="csH">Crew rate per hour ($)</label><input id="csH" type="number" inputmode="decimal" min="0" step="0.01"></div></div><p class="src">Set once for the team. The storm log and monthly summary then show an estimated cost.</p>';
+    b.appendChild(box); $("csB").value = sp.bagCost || ""; $("csH").value = sp.hourRate || "";
+    var save = function () { var r = settings(); r.props = r.props || {}; r.props.bagCost = Math.max(0, +$("csB").value || 0); r.props.hourRate = Math.max(0, +$("csH").value || 0); A.save(r).then(function () { PU.toast("Costs saved for the team.", 1500); }, function () {}); };
+    $("csB").onchange = save; $("csH").onchange = save; }
   function exportRun(run) { var q = A.toCSVq, k = run.props.kind, tk = ticksOf(run), lines = [[k === "storm" ? "Storm" : "Checklist", "Park", "Item", "Type", "Priority", "Method", "Ice melt", "Length/area", "Status", k === "storm" ? "Cleared at" : "Done at", "By", "Item ID"].join(",")];
     runParks(run).forEach(function (p) { steps(run, p.n).forEach(function (s) { var t = tk[s.key], a = s.a, pr = a ? a.props || {} : {};
       if (!p.mapped && !t) return;
       lines.push([run.label, p.n, s.text, a ? A.tOf(a).name : (p.mapped ? "Step" : "Whole park"), pr.priority || "", pr.method || "", pr.melt || "", a ? A.measure(a) : "", t ? (k === "storm" ? "Cleared" : "Done") : "Not done", t ? new Date(t.props.t).toLocaleString() : "", t ? t.props.by || "" : "", a ? a.id : ""].map(q).join(",")); }); });
+    if (k === "storm") { var us = usageOf(run), tot = usageTot(run), cst = costOf(tot);
+      if (Object.keys(us).length) { lines.push(""); lines.push(["Park", "Crew hours", "Ice melt bags", "Entered by", "Entered at"].map(q).join(","));
+        Object.keys(us).sort().forEach(function (pk) { var p = us[pk].props; lines.push([pk, p.hours || 0, p.bags || 0, p.by || "", new Date(p.t).toLocaleString()].map(q).join(",")); });
+        lines.push(["Total", tot.hours, tot.bags, cst == null ? "" : "Estimated cost " + money(cst), ""].map(q).join(",")); } }
     lines.push(""); lines.push(["Started", new Date(run.props.started).toLocaleString(), "Ended", run.props.ended ? new Date(run.props.ended).toLocaleString() : "still open", "Started by", run.props.by || ""].map(q).join(","));
     A.saveFile(slug(run.label) + "-log-" + ymd(run.props.started) + ".csv", lines.join("\n"), "text/csv"); }
 
   /* --- irrigation checklists: one shared list per park, per season --- */
   var irKind = (function () { var m = new Date().getMonth(); return m >= 7 ? "blowout" : "startup"; })();
+  function clLabel(kind, yr) { return (kind === "startup" ? "Spring startup " : kind === "blowout" ? "Fall blowout " : kind === "pclose" ? "Winterizing " : "Opening ") + yr; }
   function checklist(kind, park, make) { var yr = new Date().getFullYear(), id = "run-" + kind + "-" + yr + "-" + slug(park), r = A.byId(id);
-    if (r || !make) return r || { id: id, type: "run", label: (kind === "startup" ? "Spring startup " : "Fall blowout ") + yr, park: park, props: { kind: kind, year: yr, started: Date.now(), ended: "", by: "" }, ghost: true };
-    r = { id: id, type: "run", created: Date.now(), photoCount: 0, park: park, label: (kind === "startup" ? "Spring startup " : "Fall blowout ") + yr, notes: "", cond: "Open", props: { kind: kind, year: yr, started: Date.now(), ended: "", by: who() } };
+    if (r || !make) return r || { id: id, type: "run", label: clLabel(kind, yr), park: park, props: { kind: kind, year: yr, started: Date.now(), ended: "", by: "" }, ghost: true };
+    r = { id: id, type: "run", created: Date.now(), photoCount: 0, park: park, label: clLabel(kind, yr), notes: "", cond: "Open", props: { kind: kind, year: yr, started: Date.now(), ended: "", by: who() } };
     return r; }
   function screenIrrigation() {
     title("Irrigation checklists"); var b = $("opBody"), ir = {}; things().forEach(function (a) { if (A.layerOf(a) === "irrigation") ir[a.park] = (ir[a.park] || 0) + 1; });
@@ -398,6 +447,24 @@
       r.onclick = function () { var real = checklist(irKind, n, true); (real.created && !A.byId(real.id) && !ro() ? A.save(real) : Promise.resolve()).then(function () { push(screenRunPark(real.id, n)); }, function () {}); };
       $("irRows").appendChild(r); });
     var s = document.createElement("p"); s.className = "src"; s.textContent = doneParks + " of " + parks.length + " parks finished"; b.appendChild(s);
+  }
+  /* --- pool winterizing / opening: one shared list per pool, per year --- */
+  var poolKind = (function () { var m = new Date().getMonth(); return m >= 7 ? "pclose" : "popen"; })();
+  function poolList() { return PU.PL.filter(function (p) { return p.pool; }).map(function (p) { return p.n; }).sort(); }
+  function screenPools() {
+    title("Pool checklists"); var b = $("opBody"), yr = new Date().getFullYear(), extra = poolExtra(poolKind);
+    b.innerHTML = '<div class="as-seg" id="plK" style="margin-bottom:8px"></div><p class="mut" style="font-size:13px;margin:0 0 6px">' + (poolKind === "pclose" ? "Closing each pool for the winter. " : "Getting each pool ready to open. ") + 'Everyone works from the same list; each step is stamped with who and when.</p><div id="plRows"></div>' +
+      '<div class="op-box"><h4>Steps your team added (every pool)</h4><div id="plX"></div>' + (ro() ? "" : '<div class="as-2" style="margin-top:6px"><div class="as-f" style="flex:1"><input id="plNew" maxlength="120" placeholder="e.g. Drain the slide pump"></div></div><div class="as-act" style="margin-top:4px"><button id="plAdd">\uff0b Add step</button></div>') + "</div>";
+    [["pclose", "\u2744\ufe0f Winterizing"], ["popen", "\u2600\ufe0f Opening"]].forEach(function (x) { var c = document.createElement("button"); c.textContent = x[1] + " " + yr; c.style.setProperty("--c", "#22d3ee"); c.setAttribute("aria-pressed", poolKind === x[0]); c.onclick = function () { poolKind = x[0]; redraw(); }; $("plK").appendChild(c); });
+    poolList().forEach(function (n) { var run = checklist(poolKind, n, false), g = run.ghost ? { done: 0, all: steps(run, n).length } : progress(run, n);
+      var r = document.createElement("button"); r.className = "op-row"; r.innerHTML = '<img alt="" src="' + A.iconURL("run") + '"><span><b></b><small></small></span><span class="when ' + (g.all && g.done === g.all ? "ok" : g.done ? "soon" : "") + '">' + g.done + " / " + g.all + "</span>";
+      r.querySelector("b").textContent = n; r.querySelector("small").textContent = run.ghost ? "not started" : (run.props.ended ? "finished " + niceDay(ymd(run.props.ended)) : "in progress");
+      r.onclick = function () { var real = checklist(poolKind, n, true); (real.created && !A.byId(real.id) && !ro() ? A.save(real) : Promise.resolve()).then(function () { push(screenRunPark(real.id, n)); }, function () {}); };
+      $("plRows").appendChild(r); });
+    if (!extra.length) $("plX").innerHTML = '<div class="op-mini"><span class="mut">None yet.</span></div>';
+    extra.forEach(function (x, i) { var r = document.createElement("div"); r.className = "op-mini"; r.innerHTML = "<span></span>" + (ro() ? "" : '<button class="go" aria-label="Remove">\u2715</button>'); r.querySelector("span").textContent = x;
+      var del = r.querySelector("button"); if (del) del.onclick = function () { if (!confirm("Remove \u201c" + x + "\u201d from every pool\u2019s list?")) return; var s0 = settings(); s0.props.steps[poolKind].splice(i, 1); A.save(s0).then(redraw); }; $("plX").appendChild(r); });
+    if ($("plAdd")) $("plAdd").onclick = function () { var v = $("plNew").value.trim(); if (!v) return; var s0 = settings(); s0.props = s0.props || {}; s0.props.steps = s0.props.steps || {}; (s0.props.steps[poolKind] = s0.props.steps[poolKind] || []).push(v); A.save(s0).then(function () { PU.toast("Step added to every pool.", 1500); redraw(); }, function () {}); };
   }
   /* head-to-head coverage: a head's spray should reach the next head. Flag heads that have no throw set, or whose nearest neighbour is out of reach. */
   function coverage(park) { var heads = things().filter(function (a) { return a.type === "head" && a.park === park && a.lng != null && a.cond !== "Off"; }), noThrow = [], gaps = [];
@@ -420,7 +487,18 @@
   var POOL_ID = { "Splash Landing Pool": ["splash", "splash-landing"], "Aviator Pool": ["aviator", "aviator"], "F-15 Pool": ["f15", "f-15"], "Jet Stream Pool": ["jet", "jet-stream"], "Puddle Jumper Pool": ["puddle", "puddle-jumper"], "Maverick Pool": ["maverick", "maverick"], "Runway 35 Pool": ["runway", "runway-35"] };
   var FR_ALIAS = { "Runway 35 Pool": "Runway Pool" };
   function frName(n) { return FR_ALIAS[n] || n; }
-  function frIndex() { return LS.get("pu-fr-index", null) || { by: {}, assets: {} }; }
+  /* Field Reports are synced records now (frrep / frupd), so the counts come straight from them; the old phone-only index is the fallback */
+  var frMemo = { n: -1, v: null };
+  function frIndex() { var all = A.all(), reps = all.filter(function (a) { return a.type === "frrep"; });
+    if (!reps.length) return LS.get("pu-fr-index", null) || { by: {}, assets: {} };
+    var sig = all.length + ":" + reps.length + ":" + all.reduce(function (m, a) { return Math.max(m, a.updated || 0); }, 0); if (frMemo.n === sig) return frMemo.v;
+    var last = {}; all.forEach(function (a) { if (a.type !== "frupd") return; var d = (a.props || {}).doc || {}; if (!d.reportId) return; var l = last[d.reportId]; if (!l || String(d.created) > String(l.created)) last[d.reportId] = d; });
+    var by = {}, as = {};
+    reps.forEach(function (a) { var d = (a.props || {}).doc || {}, rid = a.id.slice(3), st = last[rid] ? last[rid].status : "Open", p = d.loc || d.site || a.park || "", hot = d.pri === "High" || d.pri === "Safety hazard";
+      if (p) { var m = by[p] || (by[p] = { n: 0, open: 0, hot: 0 }); m.n++; if (st !== "Done") { m.open++; if (hot) m.hot++; } }
+      if (d.asset) (as[d.asset] = as[d.asset] || []).push({ id: rid, title: d.title || "Report", st: st, t: d.created || "" }); });
+    Object.keys(as).forEach(function (k) { as[k].sort(function (x, y) { return String(y.t).localeCompare(String(x.t)); }); });
+    frMemo = { n: sig, v: { by: by, assets: as } }; return frMemo.v; }
   function frAt(park) { return (frIndex().by || {})[frName(park)] || { n: 0, open: 0, hot: 0 }; }
   function frOpen(park) { location.href = "apps/field-reports.html#prop=" + encodeURIComponent(frName(park)); }
   function frNew(park, a) { location.href = "apps/field-reports.html#new=" + encodeURIComponent(frName(park)) + (a ? "&asset=" + encodeURIComponent(a.id) + "&title=" + encodeURIComponent(nameOf(a)) : ""); }
@@ -549,12 +627,16 @@
       fact(D.tests.length, "backflow tests") + fact(D.planted.length, "trees planted") + fact(D.removed.length, "trees removed") + fact(D.photographed, "items photographed") + "</div>" +
       "<h2>Repairs closed</h2>" + (D.closed.length ? "<table><tr><th>Closed</th><th>Park</th><th>Item</th><th>Work</th><th>By</th><th>Days open</th></tr>" + D.closed.map(function (t) { return '<tr data-task="' + esc(t.id) + '">' + td(niceDay(ymd(t.props.doneAt))) + td(t.park) + td(item(t)) + "<td>" + esc(t.label) + (t.notes ? '<div style="color:#4b5563">' + esc(t.notes) + "</div>" : "") + '<div class="pair"></div></td>' + td(t.props.doneBy || t.props.assignee || "") + td(Math.max(0, Math.round((t.props.doneAt - t.created) / DAY))) + "</tr>"; }).join("") + "</table>" : '<p class="none">No repairs were closed this month.</p>') +
       "<h2>Still open at month end</h2>" + (D.stillOpen.length ? "<table><tr><th>Opened</th><th>Park</th><th>Item</th><th>Work</th><th>Assigned to</th><th>Priority</th><th>Days open</th></tr>" + D.stillOpen.map(function (t) { return "<tr>" + td(niceDay(ymd(t.created))) + td(t.park) + td(item(t)) + td(t.label) + td((t.props || {}).assignee || "\u2014") + td((t.props || {}).pri || "") + td(days(t)) + "</tr>"; }).join("") + "</table>" : '<p class="none">Nothing was left open.</p>') +
-      "<h2>Snow events</h2>" + (D.storms.length ? "<table><tr><th>Storm</th><th>Started</th><th>Length</th><th>Check-offs</th><th>Parks touched</th></tr>" + D.storms.map(function (r) { var tk = ticksOf(r), pk = {}; Object.keys(tk).forEach(function (k) { pk[tk[k].park] = 1; }); return "<tr>" + td(r.label) + td(new Date(r.props.started).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })) + td(r.props.ended ? hours(r.props.started, r.props.ended) : "still open") + td(Object.keys(tk).length) + td(Object.keys(pk).length) + "</tr>"; }).join("") + "</table>" : '<p class="none">No snow events this month.</p>') +
-      (D.lists.length ? "<h2>Irrigation checklists worked on</h2><table><tr><th>Checklist</th><th>Park</th><th>Steps done this month</th><th>Overall</th></tr>" + D.lists.map(function (x) { return "<tr>" + td(x.r.label) + td(x.r.park) + td(x.inM) + td(x.done + " of " + x.all) + "</tr>"; }).join("") + "</table>" : "") +
+      "<h2>Snow events</h2>" + (D.storms.length ? (function () { var anyC = D.storms.some(function (r) { return costOf(usageTot(r)) != null; }), T2 = { h: 0, b: 0, c: 0 };
+        var rowsH = D.storms.map(function (r) { var tk = ticksOf(r), pk = {}, ut = usageTot(r), c = costOf(ut); T2.h += ut.hours; T2.b += ut.bags; T2.c += c || 0; Object.keys(tk).forEach(function (k) { pk[tk[k].park] = 1; });
+          return "<tr>" + td(r.label) + td(new Date(r.props.started).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })) + td(r.props.ended ? hours(r.props.started, r.props.ended) : "still open") + td(Object.keys(tk).length) + td(Object.keys(pk).length) + td(ut.hours) + td(ut.bags) + (anyC ? td(c == null ? "" : money(c)) : "") + "</tr>"; }).join("");
+        return "<table><tr><th>Storm</th><th>Started</th><th>Length</th><th>Check-offs</th><th>Parks touched</th><th>Crew hours</th><th>Ice melt bags</th>" + (anyC ? "<th>Est. cost</th>" : "") + "</tr>" + rowsH +
+          (D.storms.length > 1 ? "<tr><td><b>Total</b></td><td></td><td></td><td></td><td></td>" + td(Math.round(T2.h * 10) / 10) + td(Math.round(T2.b * 10) / 10) + (anyC ? td(money(T2.c)) : "") + "</tr>" : "") + "</table>"; })() : '<p class="none">No snow events this month.</p>') +
+      (D.lists.length ? "<h2>Checklists worked on</h2><table><tr><th>Checklist</th><th>Park</th><th>Steps done this month</th><th>Overall</th></tr>" + D.lists.map(function (x) { return "<tr>" + td(x.r.label) + td(x.r.park) + td(x.inM) + td(x.done + " of " + x.all) + "</tr>"; }).join("") + "</table>" : "") +
       (D.tests.length ? "<h2>Backflow tests</h2><table><tr><th>Tested</th><th>Park</th><th>Device</th><th>Serial</th><th>Next due</th></tr>" + D.tests.map(function (a) { return "<tr>" + td(niceDay(a.props.lasttest)) + td(a.park) + td(nameOf(a)) + td(a.props.serial || "") + td(a.props.nexttest ? niceDay(a.props.nexttest) : "") + "</tr>"; }).join("") + "</table>" : "") +
       "<h2>Due next month, and overdue now</h2>" + (D.due.length ? "<table><tr><th>Due</th><th>What</th><th>Item</th><th>Park</th></tr>" + D.due.map(function (x) { return "<tr>" + td(niceDay(x.when) + (x.days < 0 ? " (overdue)" : "")) + td(x.what) + td(x.sub) + td(x.park) + "</tr>"; }).join("") + "</table>" : '<p class="none">Nothing is due.</p>') +
       "<h2>Inventory</h2><table><tr><th>Layer</th><th>Mapped at month end</th><th>Added this month</th></tr>" + Object.keys(D.byLayer).map(function (k) { var l = D.byLayer[k]; return "<tr>" + td(l.name) + td(l.n) + td(l.added) + "</tr>"; }).join("") + "</table>" +
-      '<p class="sub" style="margin-top:10px">' + D.bad.length + " " + (D.bad.length === 1 ? "item is" : "items are") + " marked as needing repair or out of service today." + (frTot.n ? " Field Reports on this phone: " + frTot.open + " open of " + frTot.n + (frTot.hot ? ", " + frTot.hot + " high priority or safety" : "") + "." : "") + "</p></div>";
+      '<p class="sub" style="margin-top:10px">' + D.bad.length + " " + (D.bad.length === 1 ? "item is" : "items are") + " marked as needing repair or out of service today." + (frTot.n ? " Field Reports: " + frTot.open + " open of " + frTot.n + (frTot.hot ? ", " + frTot.hot + " high priority or safety" : "") + "." : "") + "</p></div>";
     printView("Summary \u00b7 " + mName, h, { file: "Park Universe summary " + ymd(repMonth).slice(0, 7), bar: '<button id="ppPrev" aria-label="Previous month">\u2039</button><button id="ppNext" aria-label="Next month">\u203a</button>',
       after: function (v) {
         v.querySelector("#ppPrev").onclick = function () { monthlySummary(new Date(repMonth.getFullYear(), repMonth.getMonth() - 1, 1)); };
@@ -577,10 +659,12 @@
       ["tasks", "\ud83d\udd27", "Tasks", ot.length ? (mine ? mine + " assigned to you" : plural(ot.length, "open repair")) : "Repairs and work orders", ot.length, ot.some(function (t) { return (t.props || {}).pri === "Safety"; })],
       ["storm", "\u2744\ufe0f", storm ? storm.label : "Snow storm", sp, 0, false, !!storm],
       ["irrigation", "\ud83d\udca7", "Irrigation checklists", "Spring startup and fall blowout", 0],
+      ["pools", "\ud83c\udfca", "Pool checklists", "Winterizing and opening, all 7 pools", 0],
       ["scan", "\ud83d\udcf7", "Scan a tag", "Take a picture of an item\u2019s QR tag", 0],
       ["tags", "\ud83c\udff7", "Print QR tags", "Stickers for benches, backflows, trees\u2026", 0],
       ["summary", "\ud83d\udcc4", "Monthly summary", "One page for the board, as a PDF", 0],
       ["reports", "\ud83d\udcdd", "Field Reports", frOpenN ? frOpenN + " open" : "Report something you saw", frOpenN]];
+    EXTRA.forEach(function (x) { var bd = x.badge ? x.badge() : 0; tiles.splice(x.at == null ? tiles.length : x.at, 0, [x.id, x.icon, typeof x.title === "function" ? x.title() : x.title, x.sub ? x.sub() : "", bd, x.hot ? x.hot() : false, x.on ? x.on() : false]); });
     b.innerHTML = '<div class="op-tiles" id="hubTiles"></div><p class="src" id="hubWho"></p>';
     tiles.forEach(function (t) { var el = document.createElement("button"); el.className = "op-tile" + (t[6] ? " on" : ""); el.id = "hub_" + t[0];
       el.innerHTML = "<i>" + t[1] + "</i><b></b><small></small><em class=\"" + (t[4] ? (t[5] ? "hot" : "") : "z") + '">' + (t[4] || "") + "</em>"; el.querySelector("b").textContent = t[2]; el.querySelector("small").textContent = t[3];
@@ -588,9 +672,11 @@
     var signed = window.PUSync && PUSync.signedIn && PUSync.signedIn();
     $("hubWho").textContent = signed ? "Signed in as " + (who() || "your team account") + " \u00b7 work syncs to the team" + (ro() ? " \u00b7 view only" : "") : "Not signed in \u00b7 work stays on this phone until you sign in (Menu \u22ee \u2192 Team sync)";
   }
-  function go(what, fromHub) { var open = fromHub ? push : start;
+  var EXTRA = [];
+  function addTile(t) { EXTRA = EXTRA.filter(function (x) { return x.id !== t.id; }); EXTRA.push(t); }
+  function go(what, fromHub) { var open = fromHub ? push : start; var ex = EXTRA.filter(function (x) { return x.id === what; })[0]; if (ex) return ex.open(open, fromHub);
     if (what === "due") { dueShowLater = false; open(screenDue()); } else if (what === "tasks") { taskFilter = "open"; open(screenTasks({})); } else if (what === "storm") open(screenStormHome);
-    else if (what === "irrigation") open(screenIrrigation); else if (what === "tags") open(screenTags); else if (what === "scan") scan(true); else if (what === "summary") monthlySummary(new Date());
+    else if (what === "irrigation") open(screenIrrigation); else if (what === "pools") open(screenPools); else if (what === "tags") open(screenTags); else if (what === "scan") scan(true); else if (what === "summary") monthlySummary(new Date());
     else if (what === "reports") location.href = "apps/field-reports.html"; else start(screenHub); }
   var dock = document.querySelector(".dock");
   if (dock && !$("dWork")) { var wb = document.createElement("button"); wb.id = "dWork"; wb.innerHTML = '<i>\u2611</i>Work<em class="bdg z" id="dWorkN"></em>'; wb.onclick = function () { if (sheetOpen()) close(); else start(screenHub); };
@@ -640,10 +726,11 @@
     try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} }
   window.bombaOpen = function (what) { go(what === "due" || what === "tasks" || what === "storm" ? what : "hub"); };
   window.addEventListener("hashchange", hashGo);
-  window.PUOps = { open: function (w) { go(w || "hub"); }, decorateCard: decorateCard, dueList: dueList, dueCounts: dueCounts, tasks: tasks, newTask: newTask, activeStorm: activeStorm, steps: steps, coverage: coverage, checklist: checklist,
-    printTags: printTags, scan: scan, tagId: tagId, tagText: tagText, decodeImage: decodeImage, monthlySummary: monthlySummary, summaryData: summaryData, checkUpdate: checkUpdate, newer: newer, refresh: refreshAll, close: close };
+  window.PUOps = { open: function (w) { go(w || "hub"); }, addTile: addTile, refreshBadges: function () { refreshBadges(); },
+    ui: { start: start, push: push, title: title, action: action, redraw: redraw, close: close, hide: hide, isOpen: sheetOpen, body: function () { return $("opBody"); }, openThing: openThing },
+    util: { ymd: ymd, parseYmd: parseYmd, addDays: addDays, addYears: addYears, daysUntil: daysUntil, niceDay: niceDay, niceTime: niceTime, niceStamp: niceStamp, slug: slug, plural: plural, nameOf: nameOf, who: who, needWho: needWho, ro: ro, things: things, recs: recs, esc: esc, LS: LS, printView: printView, lib: lib, qrURL: function (t) { return qrURL(t); }, nearSort: nearSort }, decorateCard: decorateCard, dueList: dueList, dueCounts: dueCounts, tasks: tasks, newTask: newTask, activeStorm: activeStorm, steps: steps, coverage: coverage, checklist: checklist,
+    printTags: printTags, scan: scan, settings: settings, usageTot: usageTot, POOL_STEPS: POOL_STEPS, activeStormId: function () { var r = activeStorm(); return r ? r.id : ""; }, startStorm: function (name) { return startStorm(name); }, tagId: tagId, tagText: tagText, decodeImage: decodeImage, monthlySummary: monthlySummary, summaryData: summaryData, checkUpdate: checkUpdate, newer: newer, refresh: refreshAll, close: close };
   (A.ready || Promise.resolve()).then(function () { refreshBadges(); hashGo(); setTimeout(dueNotify, 5000); setTimeout(function () { checkUpdate(false); }, 9000);
-    /* on the web (no phone app) there is nothing to see until you sign in */
-    setTimeout(function () { if (!window.BombaNative && window.PUSync && PUSync.signedIn && !PUSync.signedIn() && !things().length && !LS.get("pu-web-asked", 0)) { LS.set("pu-web-asked", 1); PUSync.open(); PU.toast("Sign in to see your team\u2019s map.", 5000); } }, 2500); });
+});
   document.addEventListener("visibilitychange", function () { if (!document.hidden) { refreshBadges(); dueNotify(); checkUpdate(false); } });
 })();
