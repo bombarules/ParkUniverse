@@ -200,7 +200,7 @@ body.walking .dock,body.walking .card,body.walking .ly-bar:not(.fl-bar),body.osm
   /* field labels -> keys, so a CSV exported from this app (or one with the same column names) comes back with its details */
   function labelMap() { var m = {}; Object.keys(A.F).forEach(function (t) { A.F[t].forEach(function (f) { m[f[0].toLowerCase()] = f[0]; m[f[1].toLowerCase()] = f[0]; }); });
     Object.assign(m, { "replacement date": "replace", "make / model": "make", "quantity": "qty", "stored at": "stored", "priority": "priority", "method": "method", "ice melt": "melt", "zone": "zone", "species": "species" }); return m; }
-  var SYN = [[/backflow|rpz|\bbfp\b/, "backflow"], [/sprinkler|rotor|spray head|\bhead\b|nozzle/, "head"], [/valve/, "valve"], [/quick ?coupler|\bqc\b/, "coupler"], [/timer|controller|clock/, "timer"],
+  var SYN = [[/\bmxu\b|radioread|water meter|\bmeter\b/, "meter"], [/backflow|rpz|\bbfp\b/, "backflow"], [/sprinkler|rotor|spray head|\bhead\b|nozzle/, "head"], [/valve/, "valve"], [/quick ?coupler|\bqc\b/, "coupler"], [/timer|controller|clock/, "timer"],
     [/stump/, "stump"], [/planting site|plant site|vacant/, "site"], [/tree/, "tree"], [/bench/, "bench"], [/trash|garbage|litter|waste|receptacle/, "trash"], [/dog|pet waste|mutt/, "dog"],
     [/grill|bbq|barbecue/, "grill"], [/restroom|bathroom|toilet/, "bathroom"], [/fire ?pit/, "firepit"], [/fountain|drinking|bottle fill/, "fountain"], [/light|lamp|pole|luminaire/, "light"],
     [/mail ?box|cbu/, "mailbox"], [/newspaper/, "newspaper"], [/picnic|table/, "table"], [/playground|play structure|tot lot/, "playground"], [/sign/, "sign"], [/pot|planter/, "flowerpot"],
