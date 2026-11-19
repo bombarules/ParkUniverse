@@ -225,3 +225,20 @@ Work → **Add to the map**:
   (A full offline map download isn't included: Mapbox's terms don't allow bulk saving of their map for this kind of app.)
 - Aquatics Tech's 3D pages are now separate files that open on demand (the page itself went from 3.2 MB to 8 KB) and they use
   the 3D library inside the app, so they work without internet.
+
+## Water meters (v2.9)
+- New item type in the **Irrigation** layer: **Water meter (MXU)** (teal "M" pin). Add it like any point: stand next to it and
+  Save GPS spot, or place it on the satellite map.
+- Details: MXU / radio ID (e.g. Sensus RadioRead 510R2 "P1 MXU ID"), meter serial #, make / model, size, reading units
+  (gallons, cubic feet, CCF, kgal), multiplier, MXU port, utility / account #, and **Read every (days)**.
+- The item's card has **Meter readings**: date, reading, how it was read (visual dial, TouchReader, utility bill, other) and a note.
+  It shows the last reading, use since the one before, use per day and a small trend line. A reading lower than the one before
+  asks first (meters only count up unless replaced or rolled over). **CSV** exports every reading with use and days between.
+- Readings are stored on the item, so they sync to the team, back up and restore like everything else.
+- With **Read every (days)** set, the next read shows in **What's due** (and on the park's ⏰ Due button).
+- Import: rows named "meter", "water meter", "MXU" or "RadioRead" become water meters.
+
+## Tag scanners (v2.9)
+- A USB or Bluetooth QR scanner in keyboard mode works with Park Universe (web map and app): with no text box selected, scan a
+  sticker and that item's card opens. Web map links: `#due`, `#tasks`, `#storm`, `#work`, `#tags`, `#summary`.
+

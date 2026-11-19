@@ -40,6 +40,7 @@
     timer: [["make", "Make / model", "text"], ["zones", "Number of zones", "num"], ["power", "Power / Wi-Fi", "text"]],
     valve: [["zone", "Zone", "text"], ["vsize", "Valve size", "select:PIPE"]],
     coupler: [["zone", "Zone", "text"]],
+    meter: [["mxu", "MXU / radio ID", "text"], ["serial", "Meter serial #", "text"], ["make", "Make / model", "text"], ["msize", "Meter size", "text"], ["units", "Reading units", "select:UNITS"], ["mult", "Multiplier (x)", "num"], ["port", "MXU port", "select:PORT"], ["utility", "Utility / account #", "text"], ["every", "Read every (days)", "num"]],
     lateral: [["pipe", "Pipe size", "select:PIPE"], ["material", "Material", "select:MATERIAL"], ["zone", "Zone", "text"], ["depth", "Depth (in)", "num"]],
     mainline: [["pipe", "Pipe size", "select:PIPE"], ["material", "Material", "select:MATERIAL"], ["depth", "Depth (in)", "num"]],
     ballfield: [["surface", "Surface", "select:SURFACE"], ["bases", "Base distance (ft)", "num"], ["fence", "Fence distance (ft)", "num"]],
@@ -48,7 +49,8 @@
   ["walk", "route", "ramp", "smailbox", "entrance", "exitgate", "steps", "icemelt", "shovel", "parking"].forEach(function (k) { F[k] = [["method", "Method", "select:METHOD"], ["melt", "Ice melt", "select:YESNO"], ["priority", "Priority", "select:PRIORITY"]]; });
   ["base", "bcage", "paint", "chalk", "dragscreen", "spikedrag", "rack", "tamper", "paintmachine", "gear"].forEach(function (k) { F[k] = [["qty", "Quantity", "num"], ["stored", "Stored at", "text"]]; });
   var LISTS = { SIZES: SIZES, PIPE: PIPE, MATERIAL: ["PVC Sch 40", "PVC Class 200", "PVC Class 315", "Poly", "Copper", "Ductile iron", "Other"],
-    SURFACE: ["Grass infield", "Skinned infield", "Turf", "Dirt"], PRIORITY: ["1 \u2013 first", "2", "3 \u2013 last"], METHOD: ["Shovel", "Plow", "Blower", "Skid steer", "Ice melt only"], YESNO: ["Yes", "No"] };
+    SURFACE: ["Grass infield", "Skinned infield", "Turf", "Dirt"], PRIORITY: ["1 \u2013 first", "2", "3 \u2013 last"], METHOD: ["Shovel", "Plow", "Blower", "Skid steer", "Ice melt only"], YESNO: ["Yes", "No"],
+    UNITS: ["Gallons", "Cubic feet", "CCF (100 cu ft)", "Kgal (1,000 gal)"], PORT: ["Port 1", "Port 2"] };
   /* [id, name, layer, geom, emoji or "#txt" badge, color] */
   var TYPES = [
     ["bench", "Bench", "assets", "point", "\ud83e\ude91", "#8d6e63"], ["trash", "Trash can", "assets", "point", "\ud83d\uddd1\ufe0f", "#2e7d32"], ["dog", "Dog station", "assets", "point", "\ud83d\udc15", "#43a047"],
@@ -59,7 +61,7 @@
     ["flowerpot", "Flower pot", "assets", "point", "\ud83c\udf37", "#d81b60"], ["other", "Other", "assets", "point", "\ud83d\udccd", "#607d8b"],
     ["tree", "Tree", "trees", "point", "@tree", "#15803d"], ["stump", "Stump", "trees", "point", "@stump", "#7c5a3a"], ["site", "Planting site", "trees", "point", "@site", "#65a30d"],
     ["head", "Sprinkler head", "irrigation", "point", "@head", "#ef4444"], ["backflow", "Backflow device", "irrigation", "point", "@backflow", "#14b8a6"],
-    ["timer", "Timer clock", "irrigation", "point", "@timer", "#eab308"], ["valve", "Zone valve", "irrigation", "point", "@valve", "#f97316"], ["coupler", "Quick coupler", "irrigation", "point", "@coupler", "#a855f7"],
+    ["timer", "Timer clock", "irrigation", "point", "@timer", "#eab308"], ["valve", "Zone valve", "irrigation", "point", "@valve", "#f97316"], ["coupler", "Quick coupler", "irrigation", "point", "@coupler", "#a855f7"], ["meter", "Water meter (MXU)", "irrigation", "point", "#M", "#0891b2"],
     ["lateral", "Lateral line", "irrigation", "line", "@line", "#3b82f6"], ["mainline", "Mainline", "irrigation", "line", "@line", "#1d4ed8"],
     ["ballfield", "Ball field outline", "fields", "polygon", "@poly", "#c2410c"], ["cage", "Batting cage outline", "fields", "polygon", "@poly", "#64748b"],
     ["base", "Bases", "fields", "point", "#B", "#f5f5f4"], ["bcage", "Portable cage", "fields", "point", "\ud83e\udd45", "#475569"], ["paint", "Field paint", "fields", "point", "\ud83c\udfa8", "#db2777"],
@@ -138,6 +140,7 @@
     if (a.type === "tree") { if (p.species) bits.push(p.species); if (p.caliper) bits.push(p.caliper + '" cal'); if (p.replace) bits.push("replace " + p.replace); }
     else if (a.type === "head") { bits.push(p.size || SIZES[0]); if (p.zone) bits.push("zone " + p.zone); }
     else if (a.type === "backflow" && p.nexttest) bits.push("test due " + p.nexttest);
+    else if (a.type === "meter") { if (p.mxu) bits.push("MXU " + p.mxu); var rl = (p.readings || []).slice().sort(function (x, y) { return x.d < y.d ? -1 : x.d > y.d ? 1 : 0; }), last = rl[rl.length - 1]; if (last) bits.push("last " + last.v + " on " + last.d); }
     else if ((a.type === "lateral" || a.type === "mainline") && p.pipe) bits.push(p.pipe);
     else if (p.qty) bits.push("qty " + p.qty);
     if (layerOf(a) === "snow") { if (p.method) bits.push(p.method); if (p.melt === "Yes") bits.push("ice melt"); if (p.priority) bits.push("priority " + p.priority.charAt(0)); }

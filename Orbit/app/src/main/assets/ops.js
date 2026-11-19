@@ -127,6 +127,8 @@
     things().forEach(function (a) { var p = a.props || {};
       if (a.type === "backflow") { var d = p.nexttest || (p.lasttest ? addYears(p.lasttest, 1) : "");
         if (d) out.push({ id: a.id, when: d, what: "Backflow test", sub: nameOf(a) + (p.nexttest ? "" : " \u00b7 a year after the last test"), park: a.park, a: a, kind: "backflow" }); }
+      else if (a.type === "meter" && +p.every > 0) { var lr = meterReads(a), ld = lr.length ? lr[lr.length - 1].d : "";
+        out.push({ id: a.id, when: ld ? addDays(ld, Math.round(+p.every)) : ymd(), what: "Read water meter", sub: nameOf(a) + (p.mxu ? " \u00b7 MXU " + p.mxu : "") + (ld ? "" : " \u00b7 no readings yet"), park: a.park, a: a, kind: "meter" }); }
       else if (a.type === "tree" && p.replace) out.push({ id: a.id, when: p.replace, what: "Replace tree", sub: (p.species ? p.species + " \u00b7 " : "") + nameOf(a), park: a.park, a: a, kind: "tree" });
       else if (a.type === "stump" && p.replace) out.push({ id: a.id, when: p.replace, what: "Replace removed tree", sub: (p.species ? p.species + " \u00b7 " : "") + nameOf(a), park: a.park, a: a, kind: "tree" });
       else if (a.type === "site" && p.replace) out.push({ id: a.id, when: p.replace, what: "Plant by", sub: (p.species ? p.species + " \u00b7 " : "") + nameOf(a), park: a.park, a: a, kind: "tree" });
@@ -142,7 +144,7 @@
     var all = dueList().filter(function (x) { return !park || x.park === park; }), c = dueCounts(all);
     title((park ? park + " \u00b7 " : "") + "What\u2019s due"); action("\u2b07 CSV", function () { exportDue(all); });
     var b = $("opBody"); b.innerHTML = "";
-    if (!all.length) { b.innerHTML = '<div class="empty">Nothing with a date yet.<br><br>Dates come from a backflow\u2019s <b>Next test due</b>, a tree\u2019s <b>Replacement date</b>, a planting site\u2019s <b>Plant by</b> and a task\u2019s <b>Due</b> date.</div>'; return; }
+    if (!all.length) { b.innerHTML = '<div class="empty">Nothing with a date yet.<br><br>Dates come from a backflow\u2019s <b>Next test due</b>, a tree\u2019s <b>Replacement date</b>, a planting site\u2019s <b>Plant by</b>, a water meter\u2019s <b>Read every (days)</b> and a task\u2019s <b>Due</b> date.</div>'; return; }
     var groups = [["Overdue", function (x) { return x.days < 0; }], ["Next 7 days", function (x) { return x.days >= 0 && x.days <= 7; }], ["Next 30 days", function (x) { return x.days > 7 && x.days <= 30; }], ["Later", function (x) { return x.days > 30; }]];
     groups.forEach(function (g, gi) { var rows = all.filter(g[1]); if (!rows.length) return;
       var h = document.createElement("div"); h.className = "as-sec"; h.textContent = g[0] + " \u00b7 " + rows.length; b.appendChild(h);
@@ -539,6 +541,60 @@
     slot.querySelector("#awRep").onclick = function () { frNew(a.park, a); };
   });
 
+  /* ---------------- water meter readings (Water meter (MXU) items) ----------------
+   * Readings live on the item (props.readings = [{d:"YYYY-MM-DD", v:number, m:method, by, n:note}]),
+   * so they sync, back up and restore with everything else. */
+  var METHODS = ["Visual (meter dial)", "TouchReader", "Utility bill / portal", "Other"];
+  function meterReads(a) { return ((a.props || {}).readings || []).filter(function (r) { return r && r.d && isFinite(+r.v); }).slice().sort(function (x, y) { return x.d < y.d ? -1 : x.d > y.d ? 1 : (x.t || 0) - (y.t || 0); }); }
+  function meterUnits(a) { var u = (a.props || {}).units || "Gallons"; return { "Gallons": "gal", "Cubic feet": "cu ft", "CCF (100 cu ft)": "CCF", "Kgal (1,000 gal)": "kgal" }[u] || u; }
+  function meterUse(a) { var r = meterReads(a), m = +((a.props || {}).mult) || 1, out = [];
+    for (var i = 0; i < r.length; i++) { var x = { d: r[i].d, v: +r[i].v, m: r[i].m || "", by: r[i].by || "", n: r[i].n || "", t: r[i].t, use: null, days: null, perDay: null };
+      if (i) { var pv = r[i - 1], days = Math.round((parseYmd(r[i].d) - parseYmd(pv.d)) / DAY), u = (+r[i].v - +pv.v) * m; x.use = u; x.days = days; x.perDay = days > 0 ? u / days : null; }
+      out.push(x); } return out; }
+  function fmtN(n) { return n == null ? "" : Math.abs(n) >= 100 ? Math.round(n).toLocaleString() : (+n.toFixed(2)).toLocaleString(); }
+  function exportReads(a) { var q = A.toCSVq, u = meterUnits(a), lines = [["Date", "Reading", "Use since last (" + u + ")", "Days", "Per day", "Method", "By", "Note", "MXU", "Meter serial", "Park", "Item"].join(",")];
+    meterUse(a).forEach(function (x) { lines.push([x.d, x.v, x.use == null ? "" : x.use, x.days == null ? "" : x.days, x.perDay == null ? "" : x.perDay.toFixed(2), x.m, x.by, x.n, (a.props || {}).mxu || "", (a.props || {}).serial || "", a.park, nameOf(a)].map(q).join(",")); });
+    A.saveFile("meter-" + slug((a.props || {}).mxu || nameOf(a)) + "-" + ymd() + ".csv", lines.join("\n"), "text/csv"); }
+  function sparkSVG(rows) { var pts = rows.filter(function (x) { return x.perDay != null; }); if (pts.length < 2) return "";
+    var W = 300, H = 56, mx = Math.max.apply(null, pts.map(function (x) { return x.perDay; })), mn = Math.min(0, Math.min.apply(null, pts.map(function (x) { return x.perDay; }))), rng = (mx - mn) || 1;
+    var path = pts.map(function (x, i) { return (i ? "L" : "M") + (6 + i * (W - 12) / (pts.length - 1)).toFixed(1) + "," + (H - 6 - (x.perDay - mn) / rng * (H - 12)).toFixed(1); }).join("");
+    return '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:56px;display:block;margin:4px 0" aria-label="Use per day"><path d="' + path + '" fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linejoin="round"/></svg>'; }
+  function drawMeter(a, wrap, RO) {
+    var rows = meterUse(a), u = meterUnits(a), p = a.props || {}, last = rows[rows.length - 1], h = '<div class="op-box"><h4>Meter readings</h4>';
+    if (p.mxu || p.serial) h += '<div class="op-mini"><span>' + (p.mxu ? "MXU <b>" + esc(p.mxu) + "</b>" : "") + (p.mxu && p.serial ? " · " : "") + (p.serial ? "meter " + esc(p.serial) : "") + '</span></div>';
+    if (last) { var since = daysUntil(last.d); h += '<div class="op-mini"><span>Last: <b>' + esc(fmtN(last.v)) + "</b> " + esc(u) + "</span><small>" + esc(niceDay(last.d)) + (since != null && since < 0 ? " · " + (-since) + " d ago" : "") + "</small></div>";
+      if (last.perDay != null) h += '<div class="op-mini"><span>Recent use: <b>' + esc(fmtN(last.perDay)) + "</b> " + esc(u) + "/day</span><small>" + esc(fmtN(last.use)) + " " + esc(u) + " over " + last.days + " d</small></div>"; }
+    h += sparkSVG(rows);
+    if (!RO) h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">' +
+      '<div class="as-f" style="margin:0"><label for="mrD">Date</label><input id="mrD" type="date" value="' + ymd() + '"></div>' +
+      '<div class="as-f" style="margin:0"><label for="mrV">Reading (' + esc(u) + ')</label><input id="mrV" type="number" inputmode="decimal" step="any" placeholder="' + (last ? esc(last.v) : "e.g. 0123456") + '"></div>' +
+      '<div class="as-f" style="margin:0"><label for="mrM">How it was read</label><select id="mrM">' + METHODS.map(function (x) { return "<option" + (x === LS.get("pu-meter-method", METHODS[0]) ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></div>" +
+      '<div class="as-f" style="margin:0"><label for="mrN">Note</label><input id="mrN" type="text" placeholder="optional"></div></div>';
+    h += '<div class="as-act" style="margin-top:6px">' + (RO ? "" : '<button id="mrAdd" class="go">＋ Save reading</button>') + (rows.length ? '<button id="mrCsv">⬇ CSV</button>' : "") + "</div>";
+    h += '<div id="mrList"></div></div>'; wrap.innerHTML = h;
+    var list = wrap.querySelector("#mrList");
+    rows.slice().reverse().slice(0, 24).forEach(function (x) { var r = document.createElement("div"); r.className = "op-mini";
+      r.innerHTML = "<span></span><small></small>" + (RO ? "" : '<button aria-label="Delete reading" style="border:0;background:none;color:var(--mut);padding:0 4px">✕</button>');
+      r.querySelector("span").textContent = niceDay(x.d) + " · " + fmtN(x.v) + (x.use != null ? "  (+" + fmtN(x.use) + " " + u + ")" : "");
+      r.querySelector("small").textContent = [x.m, x.by, x.n].filter(Boolean).join(" · ");
+      var del = r.querySelector("button"); if (del) del.onclick = function () { if (!confirm("Delete the " + niceDay(x.d) + " reading of " + x.v + "?")) return;
+        a.props.readings = (a.props.readings || []).filter(function (y) { return !(y.d === x.d && +y.v === x.v && (y.t || 0) === (x.t || 0)); });
+        A.save(a).then(function () { drawMeter(a, wrap, RO); refreshAll(); }); };
+      list.appendChild(r); });
+    if (rows.length > 24) { var more = document.createElement("div"); more.className = "op-mini"; more.innerHTML = '<span style="color:var(--mut)"></span>'; more.firstChild.textContent = (rows.length - 24) + " older readings — see CSV"; list.appendChild(more); }
+    var csv = wrap.querySelector("#mrCsv"); if (csv) csv.onclick = function () { exportReads(a); };
+    var add = wrap.querySelector("#mrAdd"); if (add) add.onclick = function () {
+      var d = wrap.querySelector("#mrD").value || ymd(), vs = String(wrap.querySelector("#mrV").value).trim(), v = +vs, m = wrap.querySelector("#mrM").value, n = wrap.querySelector("#mrN").value.trim();
+      if (!vs || !isFinite(v)) { PU.toast("Type the number shown on the meter."); wrap.querySelector("#mrV").focus(); return; }
+      var prev = meterReads(a).filter(function (r) { return r.d <= d; }).pop();
+      if (prev && v < +prev.v && !confirm("This is lower than the " + niceDay(prev.d) + " reading (" + prev.v + "). Meters only count up unless they were replaced or rolled over. Save it anyway?")) return;
+      LS.set("pu-meter-method", m);
+      a.props = a.props || {}; a.props.readings = (a.props.readings || []).concat([{ d: d, v: v, m: m, by: who() || "", n: n, t: Date.now() }]);
+      A.save(a).then(function () { PU.toast("Reading saved."); drawMeter(a, wrap, RO); refreshAll(); }); };
+  }
+  A.onCard(function (a, body, RO) { if (a.type !== "meter") return; var slot = body.querySelector("#asWork"); if (!slot) return;
+    var wrap = document.createElement("div"); slot.insertBefore(wrap, slot.firstChild); drawMeter(a, wrap, RO); });
+
   /* ======================================================================
    * 6. QR TAGS
    * ====================================================================== */
@@ -583,11 +639,21 @@
           return null; }); }); }); }
   function scan(camera) { A.pickPhoto(camera !== false, function (file) { PU.toast("Reading the tag\u2026", 6000);
     decodeImage(file).then(function (txt) { try { if (camera !== false && window.BombaNative && BombaNative.discardCapture) BombaNative.discardCapture(); } catch (e) {}
-      var id = tagId(txt); if (!txt) { PU.toast("No tag found in that photo. Fill the frame with the square code and try again.", 5000); return; }
-      if (!id) { PU.toast("That code isn\u2019t a Park Universe tag.", 4000); return; }
-      var a = A.byId(id); if (!a) { PU.toast("That tag isn\u2019t on this phone yet. Sync (Menu \u22ee \u2192 Team sync), then scan again.", 5500); return; }
-      if (a.type === "task") { start(screenTasks({})); push(screenTask(a.id)); } else A.openAsset(a.id, true);
+      if (!txt) { PU.toast("No tag found in that photo. Fill the frame with the square code and try again.", 5000); return; }
+      openTag(txt);
     }, function () { PU.toast("Couldn\u2019t read that photo."); }); }); }
+  function openTag(txt) { var id = tagId(txt);
+    if (!id) { PU.toast("That code isn\u2019t a Park Universe tag.", 4000); return; }
+    var a = A.byId(id); if (!a) { PU.toast("That tag isn\u2019t on this device yet. Sync (Menu \u22ee \u2192 Team sync), then scan again.", 5500); return; }
+    if (a.type === "task") { start(screenTasks({})); push(screenTask(a.id)); } else A.openAsset(a.id, true); }
+  /* USB / Bluetooth tag scanners type the tag ("PU:abc123") then Enter, very fast. Catch that anywhere
+     outside a text box, so a handheld scanner opens the item without the camera. */
+  (function () { var buf = "", last = 0;
+    document.addEventListener("keydown", function (e) { var t = e.target, now = Date.now();
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (now - last > 80) buf = ""; last = now;
+      if (e.key === "Enter") { if (/PU:[A-Za-z0-9_-]+$/.test(buf)) { e.preventDefault(); var b = buf; buf = ""; openTag(b); } buf = ""; return; }
+      if (e.key && e.key.length === 1) { buf += e.key; if (buf.length > 200) buf = buf.slice(-200); } }, true); })();
 
   /* ======================================================================
    * 7. PRINT VIEW + MONTHLY SUMMARY
@@ -721,7 +787,7 @@
 
   /* ---------------- start ---------------- */
   function hashGo() { var h = location.hash || ""; if (!h || h === "#") return; var m;
-    if (h === "#due") go("due"); else if (h === "#tasks") go("tasks"); else if (h === "#storm") go("storm"); else if (h === "#work") go("hub");
+    if (h === "#due") go("due"); else if (h === "#tasks") go("tasks"); else if (h === "#storm") go("storm"); else if (h === "#work") go("hub"); else if (h === "#tags") go("tags"); else if (h === "#summary") go("summary");
     else if ((m = /^#asset=(.+)$/.exec(h))) { var a = A.byId(decodeURIComponent(m[1])); if (a) A.openAsset(a.id, true); else return; } else return;
     try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} }
   window.bombaOpen = function (what) { go(what === "due" || what === "tasks" || what === "storm" ? what : "hub"); };
