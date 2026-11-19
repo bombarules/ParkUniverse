@@ -544,7 +544,7 @@
   /* ---------------- water meter readings (Water meter (MXU) items) ----------------
    * Readings live on the item (props.readings = [{d:"YYYY-MM-DD", v:number, m:method, by, n:note}]),
    * so they sync, back up and restore with everything else. */
-  var METHODS = ["Visual (meter dial)", "TouchReader", "Utility bill / portal", "Other"];
+  var METHODS = ["Meter dial", "TouchReader", "Utility bill", "Other"];
   function meterReads(a) { return ((a.props || {}).readings || []).filter(function (r) { return r && r.d && isFinite(+r.v); }).slice().sort(function (x, y) { return x.d < y.d ? -1 : x.d > y.d ? 1 : (x.t || 0) - (y.t || 0); }); }
   function meterUnits(a) { var u = (a.props || {}).units || "Gallons"; return { "Gallons": "gal", "Cubic feet": "cu ft", "CCF (100 cu ft)": "CCF", "Kgal (1,000 gal)": "kgal" }[u] || u; }
   function meterUse(a) { var r = meterReads(a), m = +((a.props || {}).mult) || 1, out = [];
@@ -565,11 +565,12 @@
     if (last) { var since = daysUntil(last.d); h += '<div class="op-mini"><span>Last: <b>' + esc(fmtN(last.v)) + "</b> " + esc(u) + "</span><small>" + esc(niceDay(last.d)) + (since != null && since < 0 ? " · " + (-since) + " d ago" : "") + "</small></div>";
       if (last.perDay != null) h += '<div class="op-mini"><span>Recent use: <b>' + esc(fmtN(last.perDay)) + "</b> " + esc(u) + "/day</span><small>" + esc(fmtN(last.use)) + " " + esc(u) + " over " + last.days + " d</small></div>"; }
     h += sparkSVG(rows);
-    if (!RO) h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">' +
-      '<div class="as-f" style="margin:0"><label for="mrD">Date</label><input id="mrD" type="date" value="' + ymd() + '"></div>' +
-      '<div class="as-f" style="margin:0"><label for="mrV">Reading (' + esc(u) + ')</label><input id="mrV" type="number" inputmode="decimal" step="any" placeholder="' + (last ? esc(last.v) : "e.g. 0123456") + '"></div>' +
-      '<div class="as-f" style="margin:0"><label for="mrM">How it was read</label><select id="mrM">' + METHODS.map(function (x) { return "<option" + (x === LS.get("pu-meter-method", METHODS[0]) ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></div>" +
-      '<div class="as-f" style="margin:0"><label for="mrN">Note</label><input id="mrN" type="text" placeholder="optional"></div></div>';
+    var FIT = ' style="width:100%;max-width:100%;min-width:0;box-sizing:border-box"';
+    if (!RO) h += '<div class="mr-form" style="margin-top:4px;min-width:0">' +
+      '<div class="as-f" style="margin:6px 0"><label for="mrV">Reading (' + esc(u) + ')</label><input id="mrV"' + FIT + ' type="number" inputmode="decimal" step="any" placeholder="' + (last ? esc(last.v) : "e.g. 0123456") + '"></div>' +
+      '<div class="as-2"><div class="as-f" style="margin:6px 0;min-width:0"><label for="mrD">Date</label><input id="mrD"' + FIT + ' type="date" value="' + ymd() + '"></div>' +
+      '<div class="as-f" style="margin:6px 0;min-width:0"><label for="mrM">How read</label><select id="mrM"' + FIT + '>' + METHODS.map(function (x) { return "<option" + (x === LS.get("pu-meter-method", METHODS[0]) ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></div></div>" +
+      '<div class="as-f" style="margin:6px 0"><label for="mrN">Note</label><input id="mrN"' + FIT + ' type="text" placeholder="optional"></div></div>';
     h += '<div class="as-act" style="margin-top:6px">' + (RO ? "" : '<button id="mrAdd" class="go">＋ Save reading</button>') + (rows.length ? '<button id="mrCsv">⬇ CSV</button>' : "") + "</div>";
     h += '<div id="mrList"></div></div>'; wrap.innerHTML = h;
     var list = wrap.querySelector("#mrList");
